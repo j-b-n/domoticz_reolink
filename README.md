@@ -20,9 +20,15 @@ and might not work for other cameras!
 - [reolink_aio](https://github.com/starkillerOG/reolink_aio)
 
 ### Installation
-
+Install by navigating to your Domoticz plugin folder (example: /home/pi/domoticz/plugins).
 ````
 git clone https://github.com/j-b-n/domoticz_reolink
+````
+
+### Update
+Update an installed plugin by enter in the plugin install fodler (example: /home/pi/domoticz/plugins/domoticz_reolink: 
+````
+git pull
 ````
 
 ### Usage
