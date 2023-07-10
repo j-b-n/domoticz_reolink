@@ -26,7 +26,7 @@ git clone https://github.com/j-b-n/domoticz_reolink
 ````
 
 ### Update
-Update an installed plugin by enter in the plugin install fodler (example: /home/pi/domoticz/plugins/domoticz_reolink: 
+Update an installed plugin by enter in the plugin install folder (example: /home/pi/domoticz/plugins/domoticz_reolink).
 ````
 git pull
 ````
