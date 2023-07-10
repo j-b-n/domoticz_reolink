@@ -34,4 +34,4 @@ I also used code and inspiration from [Zigbee for Domoticz](https://github.com/z
 
 **Author**
 
-j-b-n: https://github.com/j-b-n
+* [j-b-n](https://github.com/j-b-n)
