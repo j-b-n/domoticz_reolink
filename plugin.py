@@ -1,31 +1,13 @@
 """
-<plugin key="Reolink" name="Reolink camera" author="jbn" version="0.0.1" wikilink="http://www.domoticz.com/wiki/plugins/plugin.html" externallink="https://www.google.com/">
-    <description>
-        <h2>Reolink camera Plugin</h2><br/>
-        This plugin interacts with a Reolink camera.
-        <h3>Requirements</h3>
-        <ul style="list-style-type:square">
-            <li>Reolink API - reolink_aio</li>
-        </ul>
+<plugin key="Reolink" name="Reolink camera" author="jbn" version="0.0.1" externallink="https://github.com/j-b-n/domoticz_reolink">
 
-        <h3>Features</h3>
-        <ul style="list-style-type:square">
-            <li>Doorbell</li>
-        </ul>
-        <h3>Configuration</h3>
-        <ul style="list-style-type:square">
-            <li>Macaddress to the camera</li>
-            <li>Username</li>
-            <li>Password</li>
-        </ul>
-    </description>
     <params>
-       <param field="Address" label="Camera address" width="200px" required="false"/>
+       <param field="Address" label="Camera Ipaddress" width="200px" required="false"/>
        <param field="Username" label="Camera Username" width="200px" required="false" default="admin"/>
        <param field="Password" label="Camera Password" width="200px" required="false" default="" password="true"/>
        <param field="Port" label="Camera Port" width="200px" required="false" default="80"/>
-       <param field="Mode1" label="Webhook host" width="200px" required="false" default=""/>
-       <param field="Mode2" label="Webhook port" width="200px" required="false" default="8989"/>
+       <param field="Mode1" label="Webhook Host" width="200px" required="false" default=""/>
+       <param field="Mode2" label="Webhook Port" width="200px" required="false" default="8989"/>
        <param field="Mode6" label="Debug" width="150px">
              <options>
                 <option label="None" value="0"  default="true" />
