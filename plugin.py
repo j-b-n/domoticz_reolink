@@ -173,10 +173,6 @@ class BasePlugin:
         try:
             root = XML.fromstring(data)
         except Exception as ex:
-            file_name = "/tmp/message-"+ str(time.time()) + ".xml"
-            Domoticz.Error("SOAP response failed to parse. File written to: "+str(file_name)+ " Error:"+str(ex))
-            with open(file_name,"w+", encoding="utf-8") as f:
-                f.writelines(str(data))
             return result
 
         for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
