@@ -110,6 +110,7 @@ class BasePlugin:
 
     def __init__(self):
         self.running = True
+        self.stop_plugin = False
         self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.async_loop, args=(self,))
 
         self.camera_ipaddress=""
@@ -313,6 +314,9 @@ class BasePlugin:
 
     def onHeartbeat(self):
 
+        if self.stop_plugin:
+            return
+
         #
         # Make sure the device is turned off even if a timer for some reson has failed!
         # Resons might be a restart of Domoticz.
@@ -362,8 +366,13 @@ async def camera_subscribe(camera, webhook_url):
         await camera.subscribe(webhook_url, SubType.push, retry=False)
     except SubscriptionError as ex:
         Domoticz.Error("Camera subscriptionerror failed: "+str(ex))
+        self.running = False
     except Exception as ex:
         Domoticz.Error("Camera subscribe failed: "+str(ex))
+        if str(ex) == "'NoneType' object is not callable":
+            Domoticz.Error("This error can only be resolved by restarting the Domoticz server!")
+            self.stop_plugin = True
+        self.running = False
 
 async def reolink_start(self):
     camera = GetCameraHost(self.camera_ipaddress, self.camera_username, self.camera_password, self.camera_port)
@@ -375,6 +384,9 @@ async def reolink_start(self):
         await camera.get_states()
     except Exception as ex:
         Domoticz.Error("Camera update host_data/states failed: "+str(ex))
+        if str(ex).startswith("Login error"):
+            Domoticz.Error("Login error - this error can only be resolved by restarting the Camera and after that restarting the Domoticz server!")
+            self.stop_plugin = True
         return
 
     if not camera.rtsp_enabled:
