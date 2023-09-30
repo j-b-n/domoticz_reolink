@@ -11,7 +11,7 @@
         <h2>Requirements</h2><br/>
         <ul style="list-style-type:square">
             <li>Require python package <a href="https://github.com/starkillerOG/reolink_aio">reolink_aio</a> by starkillOG.</li>
-            <li>The camera need to have ONVIF enabled. See <a href="https://support.reolink.com/hc/en-us/articles/900004435763-How-to-Set-up-Reolink-Ports-Settings-via-Reolink-Client-New-Client-/">Reolink documation</a> for support.</li>
+            <li>The camera need to have ONVIF enabled. See <a href="https://support.reolink.com/hc/en-us/articles/900004435763-How-to-Set-up-Reolink-Ports-Settings-via-Reolink-Client-New-Client-/">Reolink documation</a> for support. Remeber to restart the camera after the change!</li>
         </ul>
         <h2>Parameters</h2><br/>
         <ul style="list-style-type:square">
@@ -133,8 +133,6 @@ class BasePlugin:
     def onStart(self):
         global _plugin
 
-        Parameters["Mode6"] = "2"
-        
         if Parameters["Mode6"] != "0":
             Domoticz.Debugging(int(Parameters["Mode6"]))
             Domoticz.Debug("onStart called")
@@ -219,9 +217,7 @@ class BasePlugin:
             topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
             if topic_element is None:
                 continue
-            #print("Topic:",topic_element)
             rule = os.path.basename(topic_element.text)
-            #print("Rule:",rule)
             if not rule:
                 continue
 
@@ -369,7 +365,6 @@ async def camera_subscribe(camera, webhook_url):
     except Exception as ex:
         Domoticz.Error("Camera subscribe failed: "+str(ex))
 
-
 async def reolink_start(self):
     camera = GetCameraHost(self.camera_ipaddress, self.camera_username, self.camera_password, self.camera_port)
     if camera is None:
@@ -382,15 +377,18 @@ async def reolink_start(self):
         Domoticz.Error("Camera update host_data/states failed: "+str(ex))
         return
 
-
+    if not camera.rtsp_enabled:
+        Domoticz.Error("Camera RTSP is not enabled. Please enable it!")
+        return    
+    
     if not camera.onvif_enabled:
         Domoticz.Error("Camera ONVIF is not enabled. Please enable it!")
         return
 
-    Domoticz.Log("Camera name: "+ str(camera.camera_name(0)))
-    Domoticz.Log("Camera model: "+ str(camera.model))
-    Domoticz.Log("Camera mac_address: "+ str(camera.mac_address))
-    Domoticz.Log("Camera doorbell: "+ str(camera.is_doorbell(0)))
+    Domoticz.Log("Camera name       : " + str(camera.camera_name(0)))
+    Domoticz.Log("Camera model      : " + str(camera.model))
+    Domoticz.Log("Camera mac_address: " + str(camera.mac_address))
+    Domoticz.Log("Camera doorbell   : " + str(camera.is_doorbell(0)))
 
     await camera_subscribe(camera, self.webhook_url)
 
