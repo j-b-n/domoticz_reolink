@@ -59,47 +59,17 @@
     </params>
 </plugin>
 """
-
-##
-# When this plugin is restarted while the Domoticz server is running the old Python interpreter is not cleared enough thus
-# leaving cached versions of
-# * asyncio
-# * datetime
-#     This manifests in reolink_aio when calling datetime.strptime with the error
-#     'NoneType' object is not callable
-#
-# The root-cause error in Python is tracked here: https://github.com/python/cpython/issues/71587
-#
-# Removing the loaded modules and then importing them solves this issue.
-#
-# Similar issue is found here:
-# PyO3 modules may only be initialized once per interpreter process, https://www.domoticz.com/forum/viewtopic.php?f=65&t=40417
-# and the work-around: https://github.com/zigbeefordomoticz/Domoticz-Zigbee/commit/ba6d729f337ce4fd38a4afb62d9eb8d639d1f84d
-#
-# Perhaps reolink_aio shoudl change to
-# "Conversely, the datetime.strptime() class method creates a datetime object from a string representing a date and time and
-# a corresponding format string. datetime.strptime(date_string, format) is equivalent to
-# datetime(*(time.strptime(date_string, format)[0:6]))."
-#
-##
-import sys
-#sys.modules["_asyncio"] = None
-#sys.modules["_datetime"] = None
-from datetime import datetime, timedelta
-
 ##
 # Plugin
 ##
 import DomoticzEx as Domoticz
 import threading
 import time
+from datetime import datetime, timedelta
 import json
 import os
 from xml.etree import ElementTree as XML
-import asyncio
-from reolink_aio.api import Host
-from reolink_aio.enums import SubType
-from reolink_aio.exceptions import ReolinkError, SubscriptionError
+import subprocess
 
 class BasePlugin:
     RULES = ["Motion","FaceDetect","PeopleDetect","VehicleDetect","DogCatDetect","MotionAlarm","Visitor"]
@@ -109,10 +79,8 @@ class BasePlugin:
     threads = {}
 
     def __init__(self):
-        self.running = True
         self.stop_plugin = False
-        self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.async_loop, args=(self,))
-
+        self.running = True
         self.camera_ipaddress=""
         self.camera_port = 0
         self.camera_username = ""
@@ -123,13 +91,7 @@ class BasePlugin:
         self.webhook_url = ""
 
         self.task = None
-
-    def async_loop( self ):
-        loop = get_or_create_eventloop()
-        self.task = reolink_start(self)
-        loop.run_until_complete(self.task)
-        loop.run_until_complete(asyncio.sleep(1))
-        loop.close()
+        self.process = None
 
     def onStart(self):
         global _plugin
@@ -169,11 +131,56 @@ class BasePlugin:
                                                   Address="127.0.0.1", Port=self.webhook_port)
         self.httpClientConn.Listen()
 
+#        self.camhookConn = Domoticz.Connection(Name="Camera process webhook", Transport="TCP/IP",
+#                                               Protocol="JSON",
+#                                               Address="127.0.0.1",
+#                                               Port=self.webhook_port)
+#        self.camhookConn.Listen()
+
+        
+        self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop, args=(self,))        
         self.camera_thread.start()
+
+
+    def camera_loop( self ):
+        try:
+#            Domoticz.Log("CWD: "+os. getcwd())
+            # "/home/pi/domoticz/plugins/domoticz_reolink/camera.py"
+            path = os.getcwd()+"/plugins/domoticz_reolink/camera.py"
+            self.process = subprocess.Popen(["python", path,
+                                             self.camera_ipaddress,self.camera_port,
+                                             self.camera_username,self.camera_password,
+                                             self.webhook_host,self.webhook_port
+                                             ])
+
+            #Domoticz.Debug("Camera process poll: "+str(self.process.poll()))
+            while True:
+                if self.stop_plugin:
+                    break
+                #Domoticz.Debug("Camera process poll: "+str(self.process.poll()))
+                if self.process is not None:
+                    if self.process.poll() is not None:
+                        Domoticz.Error("Camera process dead: "+str(self.process.returncode))
+                        self.process = subprocess.Popen(["python", path,
+                                                         self.camera_ipaddress,self.camera_port,
+                                                         self.camera_username,self.camera_password,
+                                                         self.webhook_host,self.webhook_port
+                                                         ])
+                time.sleep(5)
+        except Exception as err:
+            Domoticz.Error("handleMessage: "+str(err))
+
+        Domoticz.Log("Terminate camera process!")
+        self.process.terminate()
+        while self.process.poll() is None:
+            time.sleep(1)
+            Domoticz.Log("Waiting for process to die!")
+            self.process.kill()
 
 
     def onStop(self):
         self.running = False
+        self.stop_plugin = True
         self.camera_thread.join()
 
         for thread in threading.enumerate():
@@ -253,7 +260,7 @@ class BasePlugin:
         if device in self.threads:
              if self.threads[device] is not None:
                 if(self.threads[device].is_alive()):
-                    Domoticz.Error("Device thread for "+device+" is alive! Cancel old thread and start new one!")
+                    #Domoticz.Error("Device thread for "+device+" is alive! Cancel old thread and start new one!")
                     self.threads[device].cancel()
                     time.sleep(0.1)
                     while self.threads[device].is_alive():                        
@@ -279,8 +286,7 @@ class BasePlugin:
         except OSError:
             Domoticz.Error("OS error occurred: "+file_path)    
 
-    def onMessage(self, connection, data):
-        Domoticz.Debug("onMessage called for connection: "+connection.Address+":"+connection.Port)
+    def parseCameramessage(self, data):
 
         parse_result =  self.reolink_parse_soap(data)
 
@@ -301,7 +307,35 @@ class BasePlugin:
                                 update_device(device_name, Unit=1, sValue=0 , nValue=0)
                         
                     except Exception as ex:
-                        Domoticz.Error("Failed to update device! Error: "+str(ex))
+                        Domoticz.Error("Failed to update device! Error: "+str(ex))        
+        
+            
+    def onMessage(self, connection, data):
+        Domoticz.Debug("onMessage called for connection: "+connection.Address+":"+connection.Port)
+
+        if connection.Address.startswith(self.camera_ipaddress):
+            self.parseCameramessage(data)
+        else:
+            Domoticz.Debug("Response data: "+str(data))
+            lines = data.splitlines()
+            s = lines[len(lines)-1] 
+            s = s.decode("utf-8")
+            json_obj = json.loads(json.loads(lines[len(lines)-1] ))
+
+            if "Log" in json_obj:
+                Domoticz.Log( str( json_obj["Log"] ))
+            if "Debug" in json_obj:
+                Domoticz.Debug( str( json_obj["Debug"] ))
+            if "Error" in json_obj:
+                Domoticz.Error( str( json_obj["Error"] ))
+            
+            #self.camhookConn.Send({"Status":"200 OK", "Headers": {"Connection": "keep-alive", "Accept": "Content-Type: text/html; charset=UTF-8"}, "Data": "{Data: Ok}"})
+            
+            #resp = "<!doctype html><html><head></head><body><h1>Successful GET!!!</h1><body></html>"
+            #connection.Send({"Status":"200 OK", "Headers": {"Connection": "keep-alive", "Accept": "Content-Type: text/html; charset=UTF-8"}, "Data": resp})
+
+        return
+
 
     def onCommand(self, DeviceID, Unit, Command, Level, Color):
         Domoticz.Log("onCommand called for Device " + str(DeviceID) + " Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level)+" Color "+str(Color))
@@ -313,9 +347,6 @@ class BasePlugin:
         Domoticz.Debug("onDisconnect called for connection '"+Connection.Name+"'.")
 
     def onHeartbeat(self):
-
-        if self.stop_plugin:
-            return
 
         #
         # Make sure the device is turned off even if a timer for some reson has failed!
@@ -335,100 +366,14 @@ class BasePlugin:
             self.running = False
             Domoticz.Log("camera_thread dead - restart!")
             self.camera_thread.join()
-            self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.async_loop,
+            self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop,
                                                   args=(self,))
             self.camera_thread.start()
             self.running = True
 
-def get_or_create_eventloop():
-    try:
-        return asyncio.get_event_loop()
-    except RuntimeError as ex:
-        if "There is no current event loop in thread" in str(ex):
-            asyncio.set_event_loop(asyncio.new_event_loop())
-            return asyncio.get_event_loop()
-    return None
 
-def GetCameraHost(camera_ipaddress, camera_username, camera_password, camera_port):
-    try:
-        Domoticz.Debug("Connect camera at: "+str(camera_ipaddress))
-        camera_host = Host(camera_ipaddress, camera_username, camera_password, port=camera_port)
-        return camera_host
-    except ReolinkError as err:
-        Domoticz.Error("GetCameraHost failed with ReolinkError: "+str(err))
-        return None
-    except Exception as ex:
-        Domoticz.Error("GetCameraHost failed with exception: "+str(ex))
-        return None
 
-async def camera_subscribe(camera, webhook_url):
-    try:
-        await camera.subscribe(webhook_url, SubType.push, retry=False)
-    except SubscriptionError as ex:
-        Domoticz.Error("Camera subscriptionerror failed: "+str(ex))
-        self.running = False
-    except Exception as ex:
-        Domoticz.Error("Camera subscribe failed: "+str(ex))
-        if str(ex) == "'NoneType' object is not callable":
-            Domoticz.Error("This error can only be resolved by restarting the Domoticz server!")
-            self.stop_plugin = True
-        self.running = False
-
-async def reolink_start(self):
-    camera = GetCameraHost(self.camera_ipaddress, self.camera_username, self.camera_password, self.camera_port)
-    if camera is None:
-        Domoticz.Error("Get camera returned None!")
-        return
-    try:
-        await camera.get_host_data()
-        await camera.get_states()
-    except Exception as ex:
-        Domoticz.Error("Camera update host_data/states failed: "+str(ex))
-        if str(ex).startswith("Login error"):
-            Domoticz.Error("Login error - this error can only be resolved by restarting the Camera and after that restarting the Domoticz server!")
-            self.stop_plugin = True
-        return
-
-    if not camera.rtsp_enabled:
-        Domoticz.Error("Camera RTSP is not enabled. Please enable it!")
-        return    
-    
-    if not camera.onvif_enabled:
-        Domoticz.Error("Camera ONVIF is not enabled. Please enable it!")
-        return
-
-    Domoticz.Log("Camera name       : " + str(camera.camera_name(0)))
-    Domoticz.Log("Camera model      : " + str(camera.model))
-    Domoticz.Log("Camera mac_address: " + str(camera.mac_address))
-    Domoticz.Log("Camera doorbell   : " + str(camera.is_doorbell(0)))
-
-    await camera_subscribe(camera, self.webhook_url)
-
-    while self.running:
-        if camera is None:
-            Domoticz.Error("Camera is None!")
-            camera = GetCameraHost(self.camera_ipaddress, self.camera_username, self.camera_password, self.camera_port)
-            camera = GetCameraHost(self.camera_ipaddress, self.camera_username, self.camera_password, self.camera_port)
-
-        await camera.get_states()
-        renewtimer = camera.renewtimer()
-        if renewtimer <= 100 or not camera.subscribed(SubType.push):
-            Domoticz.Debug("Renew camera subscription!")
-            if not await camera.renew():
-                await camera_subscribe(camera, self.webhook_url)
-
-        await asyncio.sleep(5)
-
-    Domoticz.Log("Camera logout!")
-    try:
-        await camera.unsubscribe()
-    except SubscriptionError as ex:
-        Domoticz.Error("Camera unsubscribe failed: "+str(ex))
-    except Exception as ex:
-        Domoticz.Error("Camera unsubscribe failed: "+str(ex))        
-        
-    camera.logout()
-    camera = None
+            
 
 global _plugin
 _plugin = BasePlugin()
