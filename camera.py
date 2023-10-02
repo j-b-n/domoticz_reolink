@@ -19,23 +19,25 @@ def Post(msg):
     try:
         json_object = json.dumps(msg)
         x = requests.post(camhook_url, json = json_object)
-    except Exception as Ex:        
-        logger.debug("Post Error: "+str(Ex))
+    except Exception as Ex:
+        if dologging:
+            logger.debug("Post Error: "+str(Ex))
     
 def Log(msg):
-    logger.debug(msg)
+    if dologging:
+        logger.debug(msg)
     myobj = {'Log': msg}
     Post(myobj)
 
-
 def Error(msg):
-    logger.debug(msg)
+    if dologging:
+        logger.debug(msg)
     myobj = {'Error': msg}
     Post(myobj)    
 
-
 def Debug(msg):
-    logger.debug(msg)
+    if dologging:
+        logger.debug(msg)
     myobj = {'Debug': msg}
     Post(myobj)        
 
@@ -147,49 +149,40 @@ parser.add_argument("camera_username", help="Camera username",type=str)
 parser.add_argument("camera_password", help="Camera password",type=str)
 parser.add_argument("webhook_host", help="Webhook host ipaddress",type=str)
 parser.add_argument("webhook_port", help="Webhook port",type=str)
-parser.add_argument("--d", help="Debug",action='store_true')
+parser.add_argument("--log", help="Activate logging to /tmp/camera.log",action='store_true')
 
 args = parser.parse_args()
 
+dologging = args.log
+
 camera_ipaddress = args.camera_ipaddress
-camhook_port = args.camera_port
+camera_port = args.camera_port
 camera_username = args.camera_username
 camera_password = args.camera_password
-camera_port = args.camera_port
 webhook_host = args.webhook_host
 webhook_port = args.webhook_port
 webhook_url = "http://"+webhook_host+":"+str(webhook_port)
 camhook_url = "http://"+webhook_host+":"+str(webhook_port)
 
-logger = logging.getLogger("Camera")
-logger.setLevel(logging.DEBUG)
+if dologging:
+    logger = logging.getLogger("Camera")
+    logger.setLevel(logging.DEBUG)
 
-handler = logging.handlers.TimedRotatingFileHandler(LOG_FILENAME,
-                                                    when='midnight',
-                                                    interval=1,
-                                                    backupCount=5,
-                                                    encoding=None,
-                                                    delay=False,
-                                                    utc=False)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
-handler.setFormatter(formatter)
+    handler = logging.handlers.TimedRotatingFileHandler(LOG_FILENAME,
+                                                        when='midnight',
+                                                        interval=1,
+                                                        backupCount=5,
+                                                        encoding=None,
+                                                        delay=False,
+                                                        utc=False)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
+    handler.setFormatter(formatter)
 
-logger.addHandler(handler)
+    logger.addHandler(handler)
 
-logger.info("args: "+str(args))
-logger.info("webhook_url: "+webhook_url)
-logger.info("camhook_url: "+camhook_url)
-
-#try:
-#    Log("Camera process start!")
-#    while True:
-#        Log("Camera process tick!")
-#        time.sleep(5)
-#except Exception as ex:        
-#    Error("Something else!"+str(ex))
-#    sys.exit(-2)
-#
-#sys.exit(-3)
+    Debug("args: "+str(args))
+    Debug("webhook_url: "+webhook_url)
+    Debug("camhook_url: "+camhook_url)
 
 camera_thread = threading.Thread(name="Camera thread", target=async_loop, args=())
 camera_thread.start()
@@ -212,7 +205,7 @@ try:
 except ex:
     Error("Something else!")
 
-logger.info("Stop camera process!")
+Debug("Stop camera process!")
 running = False
 camera_thread.join()
 
