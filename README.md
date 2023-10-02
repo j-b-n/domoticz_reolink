@@ -30,9 +30,10 @@ Update an installed plugin by enter in the plugin install folder (example: /home
 ````
 git pull
 ````
+### Please note!
+The first approach using async_io in the plugin.py file is not stable enough on my test system. I have changed to a different approach where the communication with the Reolink camera is handled in a separated subprocess (ie [camera.py](https://github.com/j-b-n/domoticz_reolink/blob/main/camera.py)). You can test the communication with the camera using [test.py](https://github.com/j-b-n/domoticz_reolink/blob/main/test.py). It uses [secrets.cfg](https://github.com/j-b-n/domoticz_reolink/blob/main/secrets.cfg) for configuration.   
 
-### Usage
-
+I will continue to explore a solution that only utilizes plugin.py. 
 
 ### Acknowledgment
 This plugin use reolink_aio created by @starkillerOG found here https://github.com/starkillerOG/reolink_aio.
