@@ -317,17 +317,20 @@ class BasePlugin:
             self.parseCameramessage(data)
         else:
             Domoticz.Debug("Response data: "+str(data))
-            lines = data.splitlines()
-            s = lines[len(lines)-1] 
-            s = s.decode("utf-8")
-            json_obj = json.loads(json.loads(lines[len(lines)-1] ))
 
-            if "Log" in json_obj:
-                Domoticz.Log( str( json_obj["Log"] ))
-            if "Debug" in json_obj:
-                Domoticz.Debug( str( json_obj["Debug"] ))
-            if "Error" in json_obj:
-                Domoticz.Error( str( json_obj["Error"] ))
+            if len(data) > 20:
+                lines = data.splitlines()
+                s = lines[len(lines)-1] 
+                s = s.decode("utf-8")
+                json_obj = json.loads(json.loads(lines[len(lines)-1] ))
+
+                if "Log" in json_obj:
+                    Domoticz.Log( str( json_obj["Log"] ))
+                    if "Debug" in json_obj:
+                        Domoticz.Debug( str( json_obj["Debug"] ))
+                    if "Error" in json_obj:
+                        Domoticz.Error( str( json_obj["Error"] ))
+        
             
             #self.camhookConn.Send({"Status":"200 OK", "Headers": {"Connection": "keep-alive", "Accept": "Content-Type: text/html; charset=UTF-8"}, "Data": "{Data: Ok}"})
             
