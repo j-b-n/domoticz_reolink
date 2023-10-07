@@ -213,36 +213,44 @@ class BasePlugin:
 
         result["Any"] = False
 
-        if data is None or len(data) < 2:
+        if data is None or len(data) < 500:
             return result
 
         try:
             root = XML.fromstring(data)
         except Exception as ex:
+            Domoticz.Error("Failed to parse message from camera as XML!")
             return result
 
-        for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
-            topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
-            if topic_element is None:
-                continue
-            rule = os.path.basename(topic_element.text)
-            if not rule:
-                continue
+        try:
+        
+            for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
+                topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
+                if topic_element is None or topic_element.text is None:
+                    continue
 
-            if rule == "Motion":
-                data_element = message.find(".//{http://www.onvif.org/ver10/schema}SimpleItem[@Name='IsMotion']")
+                rule = os.path.basename(topic_element.text)
+                if not rule:
+                    continue
+               
+
+                key = "State"
+                if rule == "Motion":
+                    key = "IsMotion"
+
+                data_element = message.find(f".//\u007bhttp://www.onvif.org/ver10/schema\u007dSimpleItem[@Name='{key}']")
                 if data_element is None:
                     continue
-                if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
-                    result[rule] = True
+
+                state = data_element.attrib["Value"] == "true"
+                result[rule] = state
+                
+                if state:
                     result["Any"] = True
-            elif rule in self.RULES:
-                data_element = message.find(".//{http://www.onvif.org/ver10/schema}SimpleItem[@Name='State']")
-                if data_element is None:
-                    continue
-                if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
-                    result[rule] = True
-                    result["Any"] = True
+        except Exception as ex:
+            Domoticz.Error("Failed to parse message!"+str(ex))
+            return result            
+
         return result
 
 
@@ -251,8 +259,8 @@ class BasePlugin:
 #            device = self.RULES_DEVICE_MAP[rule]
 #        else:
 #            device = rule
-        Domoticz.Debug("Switch off device: "+device)
-        update_device(device, Unit=1, sValue=0 , nValue=0)
+        Domoticz.Log("Send Off to "+device)
+        update_device(device, Unit=1, sValue="Off" , nValue=0)
         self.threads[device] = None
     
     def start_thread(self, device):
@@ -287,49 +295,56 @@ class BasePlugin:
             Domoticz.Error("OS error occurred: "+file_path)    
 
     def parseCameramessage(self, data):
-
         parse_result =  self.reolink_parse_soap(data)
 
         if parse_result is not None:
             for rule in parse_result:
                 if rule in self.RULES_DEVICE_MAP:
                     device_name = self.RULES_DEVICE_MAP[rule]
+
                     try:
                         if parse_result[rule] == True:
-                            #self.write_debug_file(device_name, "on", data)                                
-                            update_device(device_name, Unit=1, sValue=1 , nValue=1)
+                            #self.write_debug_file(device_name, "on", data)
+                            if Devices[device_name].Units[1].sValue == "Off":
+                                Domoticz.Log("Send On to "+device_name)
+                                update_device(device_name, Unit=1, sValue="On" , nValue=1)
                             if(int(self.motion_resettime) > 0):
                                 if device_name in self.THREADDEVICES:
                                     self.start_thread(device_name)
                         else:
                             #self.write_debug_file(device_name, "off", data)                        
                             if(int(self.motion_resettime) < 1):
-                                update_device(device_name, Unit=1, sValue=0 , nValue=0)
+                                Domoticz.Log("Send Off to "+device)
+                                update_device(device_name, Unit=1, sValue="Off" , nValue=0)
                         
                     except Exception as ex:
                         Domoticz.Error("Failed to update device! Error: "+str(ex))        
-        
             
     def onMessage(self, connection, data):
         Domoticz.Debug("onMessage called for connection: "+connection.Address+":"+connection.Port)
 
-        if connection.Address.startswith(self.camera_ipaddress):
+        if len(data) < 50:
+            Domoticz.Debug("OnMessage less than 50 bytes: "+str(data))
+        if connection.Address.startswith(self.camera_ipaddress) or data.startswith(b"<SOAP-ENV:Envelope"):
             self.parseCameramessage(data)
         else:
             Domoticz.Debug("Response data: "+str(data))
 
             if len(data) > 20:
-                lines = data.splitlines()
-                s = lines[len(lines)-1] 
-                s = s.decode("utf-8")
-                json_obj = json.loads(json.loads(lines[len(lines)-1] ))
-
-                if "Log" in json_obj:
-                    Domoticz.Log( str( json_obj["Log"] ))
+                try:
+                    lines = data.splitlines()
+                    s = lines[len(lines)-1] 
+                    s = s.decode("utf-8")
+                    json_obj = json.loads(json.loads(lines[len(lines)-1] ))
+                    
+                    if "Log" in json_obj:
+                        Domoticz.Log( str( json_obj["Log"] ))
                     if "Debug" in json_obj:
                         Domoticz.Debug( str( json_obj["Debug"] ))
                     if "Error" in json_obj:
                         Domoticz.Error( str( json_obj["Error"] ))
+                except Exception as err:
+                    Domoticz.Error("Logging error: "+str(err))
         
             
             #self.camhookConn.Send({"Status":"200 OK", "Headers": {"Connection": "keep-alive", "Accept": "Content-Type: text/html; charset=UTF-8"}, "Data": "{Data: Ok}"})
@@ -350,7 +365,6 @@ class BasePlugin:
         Domoticz.Debug("onDisconnect called for connection '"+Connection.Name+"'.")
 
     def onHeartbeat(self):
-
         #
         # Make sure the device is turned off even if a timer for some reson has failed!
         # Resons might be a restart of Domoticz.
@@ -367,14 +381,12 @@ class BasePlugin:
 
         if not self.camera_thread.is_alive():
             self.running = False
-            Domoticz.Log("camera_thread dead - restart!")
+            Domoticz.Log("Camera thread is dead - restarting!")
             self.camera_thread.join()
             self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop,
                                                   args=(self,))
             self.camera_thread.start()
             self.running = True
-
-
 
             
 
