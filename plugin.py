@@ -137,8 +137,8 @@ class BasePlugin:
 #                                               Port=self.webhook_port)
 #        self.camhookConn.Listen()
 
-        
-        self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop, args=(self,))        
+
+        self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop, args=(self,))
         self.camera_thread.start()
 
 
@@ -219,11 +219,11 @@ class BasePlugin:
         try:
             root = XML.fromstring(data)
         except Exception as ex:
-            Domoticz.Error("Failed to parse message from camera as XML!")
+            Domoticz.Error("Failed to parse message from camera as XML! Length: "+str(len(data)))
             return result
 
         try:
-        
+
             for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
                 topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
                 if topic_element is None or topic_element.text is None:
@@ -232,7 +232,6 @@ class BasePlugin:
                 rule = os.path.basename(topic_element.text)
                 if not rule:
                     continue
-               
 
                 key = "State"
                 if rule == "Motion":
@@ -244,12 +243,12 @@ class BasePlugin:
 
                 state = data_element.attrib["Value"] == "true"
                 result[rule] = state
-                
+
                 if state:
                     result["Any"] = True
         except Exception as ex:
             Domoticz.Error("Failed to parse message!"+str(ex))
-            return result            
+            return result
 
         return result
 
@@ -259,25 +258,30 @@ class BasePlugin:
 #            device = self.RULES_DEVICE_MAP[rule]
 #        else:
 #            device = rule
+        if device == "Doorbell":
+            sval_off = 0
+        else:
+            sval_off = "Off"
+
         Domoticz.Log("Send Off to "+device)
-        update_device(device, Unit=1, sValue="Off" , nValue=0)
+        update_device(device, Unit=1, sValue=sval_off , nValue=0)
         self.threads[device] = None
-    
+
     def start_thread(self, device):
-        Domoticz.Debug("Start thread for device "+device+" send off in "+str(self.motion_resettime)+" seconds")        
+        Domoticz.Debug("Start thread for device "+device+" send off in "+str(self.motion_resettime)+" seconds")
         if device in self.threads:
              if self.threads[device] is not None:
                 if(self.threads[device].is_alive()):
                     #Domoticz.Error("Device thread for "+device+" is alive! Cancel old thread and start new one!")
                     self.threads[device].cancel()
                     time.sleep(0.1)
-                    while self.threads[device].is_alive():                        
+                    while self.threads[device].is_alive():
                         Domoticz.Error("Device thread for "+device+" is STILL alive! Cancel!!")
                         self.threads[device].cancel()
                         time.sleep(0.1)
 
         t = threading.Timer(int(self.motion_resettime), self.switch_off, [device])
-        t.start()                
+        t.start()
         self.threads[device] = t
 
     def write_debug_file(self, device_name, state, data):
@@ -290,9 +294,9 @@ class BasePlugin:
         except FileNotFoundError:
             Domoticz.Error("File not found: "+file_path)
             with open(file_path, "wb") as binary_file:
-                binary_file.write(data)                                
+                binary_file.write(data)
         except OSError:
-            Domoticz.Error("OS error occurred: "+file_path)    
+            Domoticz.Error("OS error occurred: "+file_path)
 
     def parseCameramessage(self, data):
         parse_result =  self.reolink_parse_soap(data)
@@ -301,25 +305,31 @@ class BasePlugin:
             for rule in parse_result:
                 if rule in self.RULES_DEVICE_MAP:
                     device_name = self.RULES_DEVICE_MAP[rule]
+                    if device_name == "Doorbell":
+                        sval_on = "1"
+                        sval_off = "0"
+                    else:
+                        sval_on = "On"
+                        sval_off = "Off"
 
                     try:
                         if parse_result[rule] == True:
                             #self.write_debug_file(device_name, "on", data)
-                            if Devices[device_name].Units[1].sValue == "Off":
+                            if Devices[device_name].Units[1].sValue is not sval_on:
                                 Domoticz.Log("Send On to "+device_name)
-                                update_device(device_name, Unit=1, sValue="On" , nValue=1)
-                            if(int(self.motion_resettime) > 0):
+                                update_device(device_name, Unit=1, sValue= sval_on , nValue=1)
+                            if int(self.motion_resettime) > 0:
                                 if device_name in self.THREADDEVICES:
                                     self.start_thread(device_name)
                         else:
-                            #self.write_debug_file(device_name, "off", data)                        
-                            if(int(self.motion_resettime) < 1):
+                            #self.write_debug_file(device_name, "off", data)
+                            if int(self.motion_resettime) < 1:
                                 Domoticz.Log("Send Off to "+device)
-                                update_device(device_name, Unit=1, sValue="Off" , nValue=0)
-                        
+                                update_device(device_name, Unit=1, sValue=sval_off , nValue=0)
+
                     except Exception as ex:
-                        Domoticz.Error("Failed to update device! Error: "+str(ex))        
-            
+                        Domoticz.Error("Failed to update device! Error: "+str(ex))
+
     def onMessage(self, connection, data):
         Domoticz.Debug("onMessage called for connection: "+connection.Address+":"+connection.Port)
 
@@ -333,10 +343,10 @@ class BasePlugin:
             if len(data) > 20:
                 try:
                     lines = data.splitlines()
-                    s = lines[len(lines)-1] 
+                    s = lines[len(lines)-1]
                     s = s.decode("utf-8")
                     json_obj = json.loads(json.loads(lines[len(lines)-1] ))
-                    
+
                     if "Log" in json_obj:
                         Domoticz.Log( str( json_obj["Log"] ))
                     if "Debug" in json_obj:
@@ -345,10 +355,10 @@ class BasePlugin:
                         Domoticz.Error( str( json_obj["Error"] ))
                 except Exception as err:
                     Domoticz.Error("Logging error: "+str(err))
-        
-            
+
+
             #self.camhookConn.Send({"Status":"200 OK", "Headers": {"Connection": "keep-alive", "Accept": "Content-Type: text/html; charset=UTF-8"}, "Data": "{Data: Ok}"})
-            
+
             #resp = "<!doctype html><html><head></head><body><h1>Successful GET!!!</h1><body></html>"
             #connection.Send({"Status":"200 OK", "Headers": {"Connection": "keep-alive", "Accept": "Content-Type: text/html; charset=UTF-8"}, "Data": resp})
 
@@ -375,7 +385,7 @@ class BasePlugin:
                     now = datetime.now()
                     devicetime = datetime.strptime(Devices[device].Units[unitnr].LastUpdate, '%Y-%m-%d %H:%M:%S')
                     td = timedelta(seconds=int(self.motion_resettime)+60)
-                    if (now - devicetime > td):
+                    if now - devicetime > td:
                         Domoticz.Debug(device+" is on for some reason, turning off!")
                         self.switch_off(device)
 
@@ -388,7 +398,7 @@ class BasePlugin:
             self.camera_thread.start()
             self.running = True
 
-            
+
 
 global _plugin
 _plugin = BasePlugin()
@@ -428,7 +438,7 @@ def onHeartbeat():
 ####
 ## Generic helper functions
 ####
-        
+
 def create_device(device_name, device_id):
     if device_name == "Doorbell":
         switch_type = 1

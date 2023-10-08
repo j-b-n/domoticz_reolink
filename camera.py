@@ -1,145 +1,158 @@
-import sys
+""" Camera.py is meant to be runned inside a Domoticz plugin."""
 import time
 import threading
-import requests
 import json
 import asyncio
 import logging
 import logging.handlers
+import argparse
 from reolink_aio.api import Host
 from reolink_aio.enums import SubType
 from reolink_aio.exceptions import ReolinkError, SubscriptionError
-import argparse
+import requests
 
-running = True
-stop_plugin = False
 LOG_FILENAME = '/tmp/camera.log'
 
-def Post(msg):
+def post(msg):
+    """ Post msg to the camhook_url"""
     try:
         json_object = json.dumps(msg)
-        x = requests.post(camhook_url, json = json_object)
-    except Exception as Ex:
+        requests.post(camhook_url, json = json_object, timeout=2)
+    except requests.exceptions.RequestException as _ex:
         if dologging:
-            logger.debug("Post Error: "+str(Ex))
-    
-def Log(msg):
+            logger.debug("Post Error: %s", str(_ex))
+
+def log(msg):
+    """ Send a Log message to the server, message in msg """
     if dologging:
         logger.debug(msg)
     myobj = {'Log': msg}
-    Post(myobj)
+    post(myobj)
 
-def Error(msg):
+
+def error(msg):
+    """ Send a Error message to the server, message in msg """
     if dologging:
         logger.debug(msg)
     myobj = {'Error': msg}
-    Post(myobj)    
+    post(myobj)
 
-def Debug(msg):
+def debug(msg):
+    """ Send a Debug message to the server, message in msg """
     if dologging:
         logger.debug(msg)
     myobj = {'Debug': msg}
-    Post(myobj)        
+    post(myobj)
 
 def get_or_create_eventloop():
+    """ Get or create an asyncio eventloop """
     try:
         return asyncio.get_event_loop()
-    except RuntimeError as ex:
-        if "There is no current event loop in thread" in str(ex):
+    except RuntimeError as _ex:
+        if "There is no current event loop in thread" in str(_ex):
             asyncio.set_event_loop(asyncio.new_event_loop())
             return asyncio.get_event_loop()
-    return None    
-    
+    return None
+
 def async_loop( ):
+    """ async_loop should run forever."""
     loop = get_or_create_eventloop()
     task = reolink_start()
     loop.run_until_complete(task)
     loop.run_until_complete(asyncio.sleep(1))
     loop.close()
 
-def GetCameraHost(camera_ipaddress, camera_username, camera_password, camera_port):
+
+def get_camera_host(_camera_ipaddress, _camera_username, _camera_password, _camera_port):
+    """ Get the Camera Host from Reolink API.
+    camera_ipaddress is the public ipaddress for the camera.
+    camera_username is the username for an admin user.
+    camera_password is the passsord.
+    camera_port the port the camera uses.
+    """
     try:
-        Debug("Connect camera at: "+str(camera_ipaddress))
-        camera_host = Host(camera_ipaddress, camera_username, camera_password, port=camera_port)
+        debug("Connect camera at: "+str(camera_ipaddress))
+        camera_host = Host(_camera_ipaddress, _camera_username, _camera_password, port=_camera_port)
         return camera_host
     except ReolinkError as err:
-        Error("GetCameraHost failed with ReolinkError: "+str(err))
-        return None
-    except Exception as ex:
-        Error("GetCameraHost failed with exception: "+str(ex))
+        error("get_camera_host failed with ReolinkError: "+str(err))
         return None
 
-async def camera_subscribe(camera, webhook_url):
+async def camera_subscribe(camera, _webhook_url):
+    """ Subsribe to events from the camera."""
     try:
-        await camera.subscribe(webhook_url, SubType.push, retry=False)
-    except SubscriptionError as ex:
-        Error("Camera subscriptionerror failed: "+str(ex))
-        running = False
-    except Exception as ex:
-        Error("Camera subscribe failed: "+str(ex))
-        if str(ex) == "'NoneType' object is not callable":
-            Error("This error can only be resolved by restarting the Domoticz server!")
-            stop_plugin = True
-        running = False
+        await camera.subscribe(_webhook_url, SubType.push, retry=False)
+    except SubscriptionError as _ex:
+        error("Camera subscriptionerror failed: "+str(_ex))
+        return False
+    except Exception as _ex:
+        error("Camera subscribe failed: "+str(_ex))
+        if str(_ex) == "'NoneType' object is not callable":
+            error("This error can only be resolved by restarting the Domoticz server!")
+        return False
+    return True
 
 async def reolink_start():
-    camera = GetCameraHost(camera_ipaddress, camera_username, camera_password, camera_port)
+    """ The main loop. """
+    camera = get_camera_host(camera_ipaddress, camera_username, camera_password, camera_port)
     if camera is None:
-        Error("Get camera returned None!")
+        error("Get camera returned None!")
         return
     try:
         await camera.get_host_data()
         await camera.get_states()
-    except Exception as ex:
-        Error("Camera update host_data/states failed: "+str(ex))
-        if str(ex).startswith("Login error"):
-            Error("Login error - this error can only be resolved by restarting the Camera and after that restarting the Domoticz server!")
-            stop_plugin = True
+    except Exception as _ex:
+        error("Camera update host_data/states failed: "+str(_ex))
+        if str(_ex).startswith("Login error"):
+            error("Login error - this error can only be resolved by restarting "+
+                  "the Camera and after that restarting the Domoticz server!")
+
         return
 
     if not camera.rtsp_enabled:
-        Error("Camera RTSP is not enabled. Please enable it!")
-        return    
-    
-    if not camera.onvif_enabled:
-        Error("Camera ONVIF is not enabled. Please enable it!")
+        error("Camera RTSP is not enabled. Please enable it!")
         return
 
-    Log("Camera name       : " + str(camera.camera_name(0)))
-    Log("Camera model      : " + str(camera.model))
-    Log("Camera mac_address: " + str(camera.mac_address))
-    Log("Camera doorbell   : " + str(camera.is_doorbell(0)))
+    if not camera.onvif_enabled:
+        error("Camera ONVIF is not enabled. Please enable it!")
+        return
 
-    
+    log("Camera name       : " + str(camera.camera_name(0)))
+    log("Camera model      : " + str(camera.model))
+    log("Camera mac_address: " + str(camera.mac_address))
+    log("Camera doorbell   : " + str(camera.is_doorbell(0)))
+
+    running = True
     await camera_subscribe(camera, webhook_url)
 
     ticks = 0
     while running:
         if camera is None:
-            Error("Camera is None!")
-            camera = GetCameraHost(camera_ipaddress, camera_username, camera_password, camera_port)
+            error("Camera is None!")
+            camera = get_camera_host(camera_ipaddress, camera_username,
+                                     camera_password, camera_port)
 
         ticks = ticks + 1
         if ticks > 10:
             await camera.get_states()
             renewtimer = camera.renewtimer()
             if renewtimer <= 100 or not camera.subscribed(SubType.push):
-                Debug("Renew camera subscription!")
+                debug("Renew camera subscription!")
                 if not await camera.renew():
-                    await camera_subscribe(camera, webhook_url)
+                    running = await camera_subscribe(camera, webhook_url)
             ticks = 0
         await asyncio.sleep(1)
 
-    Log("Camera logout!")
+    log("Camera logout!")
     try:
         await camera.unsubscribe()
-    except SubscriptionError as ex:
-        Error("Camera unsubscribe failed: "+str(ex))
-    except Exception as ex:
-        Error("Camera unsubscribe failed: "+str(ex))        
-        
+    except SubscriptionError as _err:
+        error("Camera unsubscribe failed: "+str(_err))
+    except Exception as _ex:
+        error("Camera unsubscribe failed: "+str(_ex))
+
     await camera.logout()
-    camera = None    
+    camera = None
 
 parser = argparse.ArgumentParser()
 
@@ -180,9 +193,9 @@ if dologging:
 
     logger.addHandler(handler)
 
-    Debug("args: "+str(args))
-    Debug("webhook_url: "+webhook_url)
-    Debug("camhook_url: "+camhook_url)
+    debug("args: "+str(args))
+    debug("webhook_url: "+webhook_url)
+    debug("camhook_url: "+camhook_url)
 
 camera_thread = threading.Thread(name="Camera thread", target=async_loop, args=())
 camera_thread.start()
@@ -191,33 +204,31 @@ try:
     while True:
         time.sleep(10)
         if not camera_thread.is_alive():
-            running = False
-            Log("camera_thread dead - restart!")
+            log("camera_thread dead - restart!")
             camera_thread.join()
             camera_thread = threading.Thread(name="Camera thread", target=async_loop,
                                              args=())
             camera_thread.start()
-            running = True        
 
 #except KeyboardInterrupt:
 #    #Statements to execute upon that exception
-#    Log("Keyboard interrupt!")
-except ex:
-    Error("Something else!")
+#    log("Keyboard interrupt!")
+except Exception as ex:
+    error("Something else - "+str(ex))
 
-Debug("Stop camera process!")
-running = False
+debug("Stop camera process!")
 camera_thread.join()
 
 for thread in threading.enumerate():
     if thread.name != threading.current_thread().name:
-        Log("'"+thread.name+"' is running, it must be shutdown otherwise Domoticz will abort on plugin exit.")
+        log("'"+thread.name+"' is running, it must be shutdown otherwise Domoticz "+
+            "will abort on plugin exit.")
 
 # Wait until queue thread has exited
-Log("Threads still active: "+str(threading.active_count())+", should be 1.")
+log("Threads still active: "+str(threading.active_count())+", should be 1.")
 while threading.active_count() > 1:
     for thread in threading.enumerate():
         if thread.name != threading.current_thread().name:
-            Log("'"+thread.name+"' is still running, waiting otherwise Domoticz will abort on plugin exit.")
+            log("'"+thread.name+"' is still running, waiting otherwise Domoticz will "+
+                "abort on plugin exit.")
         time.sleep(0.5)
-            
