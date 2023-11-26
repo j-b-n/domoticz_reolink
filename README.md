@@ -23,12 +23,14 @@ and might not work for other cameras!
 Install by navigating to your Domoticz plugin folder (example: /home/pi/domoticz/plugins).
 ````
 git clone https://github.com/j-b-n/domoticz_reolink
+sudo python3 -m pip install -r requirements.txt --upgrade
 ````
 
 ### Update
 Update an installed plugin by enter in the plugin install folder (example: /home/pi/domoticz/plugins/domoticz_reolink).
 ````
 git pull
+sudo python3 -m pip install -r requirements.txt --upgrade
 ````
 ### Please note!
 The first approach using async_io in the plugin.py file is not stable enough on my test system. I have changed to a different approach where the communication with the Reolink camera is handled in a separated subprocess (ie [camera.py](https://github.com/j-b-n/domoticz_reolink/blob/main/camera.py)). You can test the communication with the camera using [test.py](https://github.com/j-b-n/domoticz_reolink/blob/main/test.py). It uses [secrets.cfg](https://github.com/j-b-n/domoticz_reolink/blob/main/secrets.cfg) for configuration.   

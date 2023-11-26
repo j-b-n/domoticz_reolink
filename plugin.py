@@ -218,8 +218,11 @@ class BasePlugin:
 
         try:
             root = XML.fromstring(data)
+#            self.write_debug_file("failed", "fail", data)
         except Exception as ex:
             Domoticz.Error("Failed to parse message from camera as XML! Length: "+str(len(data)))
+            if Parameters["Mode6"] == "-1":
+                self.write_debug_file("failed", "fail", data)
             return result
 
         try:
@@ -286,13 +289,15 @@ class BasePlugin:
 
     def write_debug_file(self, device_name, state, data):
         try:
+            if state == "fail":
+                state = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             file_path = "/tmp/"+device_name+"_"+state+".xml"
             file_size = os.path.getsize(file_path)
             if file_size < 5000:
                 with open(file_path, "wb") as binary_file:
                     binary_file.write(data)
         except FileNotFoundError:
-            Domoticz.Error("File not found: "+file_path)
+            #Domoticz.Error("File not found: "+file_path)
             with open(file_path, "wb") as binary_file:
                 binary_file.write(data)
         except OSError:

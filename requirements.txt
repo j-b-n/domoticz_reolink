@@ -1,0 +1,1 @@
+reolink_aio >= 0.8.1
