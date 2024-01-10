@@ -1,1 +1,1 @@
-reolink_aio >= 0.8.1
+reolink_aio >= 0.8.6
