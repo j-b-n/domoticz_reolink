@@ -249,9 +249,10 @@ class BasePlugin:
 
     def parseCameramessage(self, data):
         try:
-            parse_result = reolink_utils.ReolinkParseSOAP(data)
+            parse_result = reolink_utils.reolink_parse_soap(data)
         except Exception as ex:
             Domoticz.Error("Failed to parse message: "+str(ex))
+            return
 
 
         if parse_result is not None:

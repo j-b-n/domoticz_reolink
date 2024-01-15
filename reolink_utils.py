@@ -1,27 +1,32 @@
+""" This module is meant to be shared between the plugin and other code, like tests """
 from xml.etree import ElementTree as XML
 import os
 
-def ReolinkParseSOAP(Data):
-    RULES = ["Motion","FaceDetect","PeopleDetect","VehicleDetect","DogCatDetect","MotionAlarm","Visitor"]
-    RESULT = {}
 
-    for rule in RULES:
-        RESULT[rule] = False
+def reolink_parse_soap(data) -> dict:
+    """ This function takes data and parse it according to the Reolink specification
+     and returns true for any of the types that is detected. """
 
-    RESULT["Any"] = False
+    rules = ["Motion", "FaceDetect", "PeopleDetect", "VehicleDetect", "DogCatDetect",
+             "MotionAlarm", "Visitor"]
+    result = {}
 
-    if Data is None or len(Data) < 2:
-        return
+    for rule in rules:
+        result[rule] = False
 
-    root = XML.fromstring(Data)
+    result["Any"] = False
+
+    if data is None or len(data) < 2:
+        return result
+
+    root = XML.fromstring(data)
 
     for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
-        topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
+        topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='" +
+                                     "http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
         if topic_element is None:
             continue
-        #print("Topic:",topic_element)
         rule = os.path.basename(topic_element.text)
-        #print("Rule:",rule)
         if not rule:
             continue
 
@@ -30,20 +35,20 @@ def ReolinkParseSOAP(Data):
             if data_element is None:
                 continue
             if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
-                RESULT[rule] = True
-                RESULT["Any"] = True
-        elif rule in RULES:
+                result[rule] = True
+                result["Any"] = True
+        elif rule in rules:
             data_element = message.find(".//{http://www.onvif.org/ver10/schema}SimpleItem[@Name='State']")
             if data_element is None:
                 continue
             if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
-                RESULT[rule] = True
-                RESULT["Any"] = True
-        return RESULT
+                result[rule] = True
+                result["Any"] = True
+        return result
 
 
 if __name__ == "__main__":
-    with open("message/Person_on.xml") as my_file:
-        Data = my_file.read()
-        res = ReolinkParseSOAP(Data)
+    with open("tests/messages/Person_on.xml", encoding="utf-8") as my_file:
+        _data = my_file.read()
+        res = reolink_parse_soap(_data)
         print(res)
