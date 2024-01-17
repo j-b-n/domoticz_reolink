@@ -255,7 +255,8 @@ class BasePlugin:
         try:
             parse_result = reolink_utils.reolink_parse_soap(data)
         except Exception as ex:
-            #Domoticz.Error("Failed to parse message: "+str(ex))
+            Domoticz.Error("Failed to parse message: "+str(ex)+" Starts with: "+str(data)[:10]+
+                           " Ends with: "+str(data)[-10:])
             self.parse_error_counter = self.parse_error_counter + 1
             return
 
@@ -297,8 +298,9 @@ class BasePlugin:
 
         if len(data) < 100:
             Domoticz.Debug("OnMessage less than 100 bytes: "+str(data))
+            return
 
-        if connection.Address.startswith(self.camera_ipaddress) and data.startswith(b"<SOAP-ENV:Envelope"):
+        if data.startswith(b"<SOAP-ENV"):
             self.parseCameramessage(data)
         else:
             Domoticz.Debug("Response data: "+str(data))
@@ -320,6 +322,7 @@ class BasePlugin:
                         Domoticz.Error(str(json_obj["Error"]))
                 except Exception as err:
                     Domoticz.Error("Logging error: "+str(err))
+                    #Domoticz.Error("Logging error: "+str(data))
         return
 
     def onCommand(self, DeviceID, Unit, Command, Level, Color):
