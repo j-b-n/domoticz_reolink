@@ -97,6 +97,8 @@ class BasePlugin:
         self.task = None
         self.process = None
 
+        self.parse_error_counter = 0
+
     def onStart(self):
         global _plugin
 
@@ -182,6 +184,8 @@ class BasePlugin:
         self.stop_plugin = True
         self.camera_thread.join()
 
+        Domoticz.Log("Parse error counter: "+str(self.parse_error_counter))
+
         for thread in threading.enumerate():
             if thread.name != threading.current_thread().name:
                 Domoticz.Log("'"+thread.name+"' is running, it must be shutdown otherwise Domoticz will abort on plugin exit.")
@@ -251,9 +255,9 @@ class BasePlugin:
         try:
             parse_result = reolink_utils.reolink_parse_soap(data)
         except Exception as ex:
-            Domoticz.Error("Failed to parse message: "+str(ex))
+            #Domoticz.Error("Failed to parse message: "+str(ex))
+            self.parse_error_counter = self.parse_error_counter + 1
             return
-
 
         if parse_result is not None:
             for rule in parse_result:
@@ -291,19 +295,22 @@ class BasePlugin:
             Domoticz.Error("onMessage called for connection "+connection.Address+" - not in approved ip-list!")
             return
 
-        if len(data) < 50:
-            Domoticz.Debug("OnMessage less than 50 bytes: "+str(data))
-        if connection.Address.startswith(self.camera_ipaddress) or data.startswith(b"<SOAP-ENV:Envelope"):
+        if len(data) < 100:
+            Domoticz.Debug("OnMessage less than 100 bytes: "+str(data))
+
+        if connection.Address.startswith(self.camera_ipaddress) and data.startswith(b"<SOAP-ENV:Envelope"):
             self.parseCameramessage(data)
         else:
             Domoticz.Debug("Response data: "+str(data))
 
-            if len(data) > 20:
+            if len(data) > 100:
                 try:
+                    data = data.decode("utf-8")
                     lines = data.splitlines()
-                    s = lines[len(lines)-1]
-                    s = s.decode("utf-8")
                     json_obj = json.loads(json.loads(lines[len(lines)-1]))
+
+                    if not "Type" in json_obj:
+                        return
 
                     if "Log" in json_obj:
                         Domoticz.Log(str(json_obj["Log"]))

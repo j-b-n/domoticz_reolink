@@ -26,7 +26,8 @@ def log(msg):
     """ Send a Log message to the server, message in msg """
     if dologging:
         logger.debug(msg)
-    myobj = {'Log': msg}
+    myobj = {'Type': 'Log',
+             'Log': msg}
     post(myobj)
 
 
@@ -34,14 +35,16 @@ def error(msg):
     """ Send a Error message to the server, message in msg """
     if dologging:
         logger.debug(msg)
-    myobj = {'Error': msg}
+    myobj = {'Type': 'Log',
+             'Error': msg}
     post(myobj)
 
 def debug(msg):
     """ Send a Debug message to the server, message in msg """
     if dologging:
         logger.debug(msg)
-    myobj = {'Debug': msg}
+    myobj = {'Type': 'Log',
+             'Debug': msg}
     post(myobj)
 
 def get_or_create_eventloop():
