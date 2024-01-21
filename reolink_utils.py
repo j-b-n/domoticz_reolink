@@ -19,10 +19,8 @@ def reolink_parse_soap(data) -> dict:
     if data is None or len(data) < 100:
         return result
 
-    try:
-        root = XML.fromstring(data)
-    except Exception as ex:
-        return
+
+    root = XML.fromstring(data)
 
     for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
         topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='" +

@@ -1,5 +1,5 @@
 """
-<plugin key="Reolink" name="Reolink camera" author="jbn" version="0.0.1" externallink="https://github.com/j-b-n/domoticz_reolink">
+<plugin key="Reolink" name="Reolink camera" author="jbn" version="0.0.2" externallink="https://github.com/j-b-n/domoticz_reolink">
     <description>
         <br/>
         <h2>Reolink Camera Plugin</h2><br/>
@@ -77,7 +77,10 @@ class BasePlugin:
 
     RULES = ["Motion", "FaceDetect", "PeopleDetect", "VehicleDetect", "DogCatDetect",
              "MotionAlarm", "Visitor"]
-    CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3}
+    # CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3}
+    CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3, "Vehicle":4, "Dog_cat":5, "Face": 6}
+    DEVICENAME = {"Doorbell": "Doorbell", "Motion": "Motion", "People": "Person",
+                  "Vehicle": "Vehicle","Dog_cat": "Animal", "Face": "Face"}
     RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person"}
     THREADDEVICES = ["Motion", "Person"]  # Create an "off" thread for these devices!
     threads = {}
@@ -85,6 +88,8 @@ class BasePlugin:
     def __init__(self):
         self.stop_plugin = False
         self.running = True
+        self.initialized = False
+
         self.camera_ipaddress = ""
         self.camera_port = 0
         self.camera_username = ""
@@ -97,7 +102,6 @@ class BasePlugin:
         self.task = None
         self.process = None
 
-        self.parse_error_counter = 0
 
     def onStart(self):
         global _plugin
@@ -124,16 +128,9 @@ class BasePlugin:
         Domoticz.Heartbeat(30)
 
         ##
-        # Create device if it is not created
-        ##
-        for _device in self.CAMERADEVICES:
-            if _device not in Devices:
-                create_device(_device, self.CAMERADEVICES[_device])
-
-        ##
         # Create webhook
         ##
-        self.httpClientConn = Domoticz.Connection(Name="Camera webhook", Transport="TCP/IP", Protocol="XML",
+        self.httpClientConn = Domoticz.Connection(Name="Camera webhook", Transport="TCP/IP", Protocol="HTTP",
                                                   Address="127.0.0.1", Port=self.webhook_port)
         self.httpClientConn.Listen()
 
@@ -146,21 +143,57 @@ class BasePlugin:
         self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop, args=(self,))
         self.camera_thread.start()
 
+
+    def camera_startup(self, camera_info):
+        ##
+        # Create device if it is not created
+        ##
+        self.initialized = True
+
+        # Implement solution to create all types
+        supported = camera_info["AI types"].strip('][').replace("'",'').split(', ')
+
+        supported.append('motion')
+
+        i = 0
+        for x in supported:
+            supported[i] = x.capitalize()
+            i = i + 1
+
+        if 'Is doorbell' in camera_info and camera_info['Is doorbell']:
+            supported.append('doorbell')
+
+        for _device in self.CAMERADEVICES:
+            if _device not in Devices and _device in supported:
+                create_device(self.DEVICENAME[_device], self.CAMERADEVICES[_device])
+
     def camera_loop(self):
         try:
             # Domoticz.Log("CWD: "+os. getcwd())
             # "/home/pi/domoticz/plugins/domoticz_reolink/camera.py"
             path = os.getcwd()+"/plugins/domoticz_reolink/camera.py"
-            self.process = subprocess.Popen(["python", path,
-                                             self.camera_ipaddress, self.camera_port,
-                                             self.camera_username, self.camera_password,
-                                             self.webhook_host, self.webhook_port])
+            self.process = subprocess.Popen(["python",
+                                             path,
+                                             self.camera_ipaddress,
+                                             self.camera_port,
+                                             self.camera_username,
+                                             self.camera_password,
+                                             self.webhook_host,
+                                             self.webhook_port])
+
+            # Domoticz.Log(str(path)+" "+
+            #             str(self.camera_ipaddress)+" "+
+            #             str(self.camera_port)+" "+
+            #             str(self.camera_username)+" "+
+            #             str(self.camera_password)+" "+
+            #             str(self.webhook_host)+" "+
+            #             str(self.webhook_port))
 
             Domoticz.Debug("Camera process poll: "+str(self.process.poll()))
             while True:
                 if self.stop_plugin:
                     break
-                Domoticz.Debug("Camera process poll: "+str(self.process.poll()))
+                # Domoticz.Debug("Camera process poll: "+str(self.process.poll()))
                 if self.process is not None:
                     if self.process.poll() is not None:
                         Domoticz.Error("Camera process dead: "+str(self.process.returncode))
@@ -183,8 +216,6 @@ class BasePlugin:
         self.running = False
         self.stop_plugin = True
         self.camera_thread.join()
-
-        Domoticz.Log("Parse error counter: "+str(self.parse_error_counter))
 
         for thread in threading.enumerate():
             if thread.name != threading.current_thread().name:
@@ -219,7 +250,9 @@ class BasePlugin:
         self.threads[device] = None
 
     def start_thread(self, device):
-        Domoticz.Debug("Start thread for device "+device+" send off in "+str(self.motion_resettime)+" seconds")
+        Domoticz.Debug("Start thread for device " + device +
+                       " send off in " + str(self.motion_resettime) +
+                       " seconds")
         if device in self.threads:
             if self.threads[device] is not None:
                 if(self.threads[device].is_alive()):
@@ -251,13 +284,17 @@ class BasePlugin:
         except OSError:
             Domoticz.Error("OS error occurred: "+file_path)
 
-    def parseCameramessage(self, data):
+    def parse_camera_message(self, data):
+        if len(data) < 1 or not self.initialized:
+            return
+
         try:
             parse_result = reolink_utils.reolink_parse_soap(data)
         except Exception as ex:
-            Domoticz.Error("Failed to parse message: "+str(ex)+" Starts with: "+str(data)[:10]+
-                           " Ends with: "+str(data)[-10:])
-            self.parse_error_counter = self.parse_error_counter + 1
+            # Domoticz.Error("Failed to parse message: "+str(ex)+" Starts with: "+str(data)[:10]+
+            #               " Ends with: "+str(data)[-10:])
+            # Domoticz.Error("Failed to parse, Error: " + str(ex) +
+            #               " Message: " + str(data))
             return
 
         if parse_result is not None:
@@ -274,8 +311,8 @@ class BasePlugin:
                     try:
                         if parse_result[rule]:
                             # self.write_debug_file(device_name, "on", data)
-                            if Devices[device_name].Units[1].sValue is not sval_on:
-                                Domoticz.Log("Send On to "+device_name)
+                            if Devices[device_name].Units[1].sValue != sval_on:
+                                Domoticz.Log("Send On to " + device_name)
                                 update_device(device_name, Unit=1, sValue=sval_on, nValue=1)
                             if int(self.motion_resettime) > 0:
                                 if device_name in self.THREADDEVICES:
@@ -289,40 +326,52 @@ class BasePlugin:
                     except Exception as ex:
                         Domoticz.Error("Failed to update device! Error: "+str(ex))
 
-    def onMessage(self, connection, data):
+
+    def parse_json_message(self, data):
+        try:
+            lines = data.splitlines()
+            json_obj = json.loads(json.loads(lines[len(lines)-1]))
+
+            if not "Type" in json_obj:
+                return
+
+            if json_obj["Type"] == "Startup":
+                self.camera_startup(json_obj)
+                for key in json_obj:
+                    if key != "Type":
+                        Domoticz.Log("Camera "+key+
+                                     " : "+str(json_obj[key]))
+
+            if json_obj["Type"] == "Log":
+                if "Log" in json_obj:
+                    Domoticz.Log(str(json_obj["Log"]))
+                if "Debug" in json_obj:
+                    Domoticz.Debug(str(json_obj["Debug"]))
+                if "Error" in json_obj:
+                    Domoticz.Error(str(json_obj["Error"]))
+        except Exception as err:
+            Domoticz.Error("Logging error: "+str(err)+
+                                   " ->" + data)
+
+    def onMessage(self, connection, message):
         Domoticz.Debug("onMessage called for connection: "+connection.Address+":"+connection.Port)
 
         if connection.Address not in [self.camera_ipaddress, self.webhook_host ]:
-            Domoticz.Error("onMessage called for connection "+connection.Address+" - not in approved ip-list!")
+            Domoticz.Error("Unauthorized access attempt by "+connection.Address+" - not in approved ip-list!")
             return
 
-        if len(data) < 100:
-            Domoticz.Debug("OnMessage less than 100 bytes: "+str(data))
+        if "Headers" not in message:
             return
-
-        if data.startswith(b"<SOAP-ENV"):
-            self.parseCameramessage(data)
-        else:
-            Domoticz.Debug("Response data: "+str(data))
-
-            if len(data) > 100:
-                try:
-                    data = data.decode("utf-8")
-                    lines = data.splitlines()
-                    json_obj = json.loads(json.loads(lines[len(lines)-1]))
-
-                    if not "Type" in json_obj:
-                        return
-
-                    if "Log" in json_obj:
-                        Domoticz.Log(str(json_obj["Log"]))
-                    if "Debug" in json_obj:
-                        Domoticz.Debug(str(json_obj["Debug"]))
-                    if "Error" in json_obj:
-                        Domoticz.Error(str(json_obj["Error"]))
-                except Exception as err:
-                    Domoticz.Error("Logging error: "+str(err))
-                    #Domoticz.Error("Logging error: "+str(data))
+        if not "Data" in message:
+            return
+        if "Content-Type" in message["Headers"]:
+            if message["Headers"]["Content-Type"] == "application/json":
+                self.parse_json_message(message["Data"])
+                return
+            if "application/soap+xml;" in message["Headers"]["Content-Type"]:
+                self.parse_camera_message(message["Data"])
+                return
+        Domoticz.Log("Unknown message: "+str(message))
         return
 
     def onCommand(self, DeviceID, Unit, Command, Level, Color):
@@ -340,14 +389,15 @@ class BasePlugin:
         # Resons might be a restart of Domoticz.
         #
         for device in self.CAMERADEVICES:
-            for unitnr in Devices[device].Units:
-                if (Devices[device].Units[unitnr].sValue == "1"):
-                    now = datetime.now()
-                    devicetime = datetime.strptime(Devices[device].Units[unitnr].LastUpdate, '%Y-%m-%d %H:%M:%S')
-                    td = timedelta(seconds=int(self.motion_resettime)+60)
-                    if now - devicetime > td:
-                        Domoticz.Debug(device+" is on for some reason, turning off!")
-                        self.switch_off(device)
+            if device in Devices:
+                for unitnr in Devices[device].Units:
+                    if (Devices[device].Units[unitnr].sValue == "1"):
+                        now = datetime.now()
+                        devicetime = datetime.strptime(Devices[device].Units[unitnr].LastUpdate, '%Y-%m-%d %H:%M:%S')
+                        td = timedelta(seconds=int(self.motion_resettime)+60)
+                        if now - devicetime > td:
+                            Domoticz.Debug(device+" is on for some reason, turning off!")
+                            self.switch_off(device)
 
         if not self.camera_thread.is_alive():
             self.running = False
