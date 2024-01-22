@@ -33,14 +33,18 @@ def post(msg):
             logger.debug("Post Error: %s", str(_ex))
 
 
+
 def log(msg):
     """ Send a Log message to the server, message in msg """
+    if PRINTMODE:
+        print(msg)
+        return
     if DOLOGGING:
         logger.debug(msg)
-    else:
-        myobj = {'Type': 'Log',
-                 'Log': msg}
-        post(myobj)
+        return
+    myobj = {'Type': 'Log',
+             'Log': msg}
+    post(myobj)
 
 
 def error(msg):
@@ -243,15 +247,18 @@ parser.add_argument("camera_username", help="Camera username", type=str)
 parser.add_argument("camera_password", help="Camera password", type=str)
 parser.add_argument("webhook_host", help="Webhook host ipaddress", type=str)
 parser.add_argument("webhook_port", help="Webhook port", type=str)
-parser.add_argument("--log", help="Activate logging to /tmp/camera.log", action='store_true')
+parser.add_argument("--log", help="Activate logging to /tmp/camera.log",
+                    action='store_true')
 parser.add_argument("--standalone", help="Run in standalone mode!", action='store_true')
 
 args = parser.parse_args()
 
+PRINTMODE = False
 DOLOGGING = args.log
 standalone = args.standalone
 
-if standalone:
+if not DOLOGGING:
+    PRINTMODE = True
     DOLOGGING = True
 
 camera_ipaddress = args.camera_ipaddress
