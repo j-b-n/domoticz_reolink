@@ -169,9 +169,7 @@ class BasePlugin:
 
     def camera_loop(self):
         try:
-            # Domoticz.Log("CWD: "+os. getcwd())
-            # "/home/pi/domoticz/plugins/domoticz_reolink/camera.py"
-            path = os.getcwd()+"/plugins/domoticz_reolink/camera.py"
+            path = Parameters['HomeFolder'] + "camera.py"
             self.process = subprocess.Popen(["python",
                                              path,
                                              self.camera_ipaddress,
