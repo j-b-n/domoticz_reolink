@@ -15,7 +15,9 @@ import logging.handlers
 import argparse
 from reolink_aio.api import Host
 from reolink_aio.enums import SubType
-from reolink_aio.exceptions import ReolinkError, SubscriptionError, ReolinkConnectionError, ReolinkTimeoutError
+from reolink_aio.exceptions import (ReolinkError, SubscriptionError,
+                                    ReolinkConnectionError, ReolinkTimeoutError,
+                                    CredentialsInvalidError, LoginError)
 import requests
 import webhook_listener
 import reolink_utils
@@ -116,7 +118,7 @@ def camera_startup(camera):
 def async_loop():
     """ async_loop should run forever."""
     loop = get_or_create_eventloop()
-    task = reolink_start()
+    task = reolink_run()
     loop.run_until_complete(task)
     loop.run_until_complete(asyncio.sleep(1))
     loop.close()
@@ -138,6 +140,14 @@ def get_camera_host(_camera_ipaddress, _camera_username, _camera_password, _came
         return None
 
 
+def get_camera():
+    camera = get_camera_host(camera_ipaddress, camera_username, camera_password, camera_port)
+    if camera is None:
+        error("Get camera returned None!")
+        return
+    return camera
+
+
 async def camera_subscribe(camera, _camhook_url):
     """ Subsribe to events from the camera."""
     try:
@@ -148,61 +158,72 @@ async def camera_subscribe(camera, _camhook_url):
     return True
 
 
-def get_camera():
-    camera = get_camera_host(camera_ipaddress, camera_username, camera_password, camera_port)
-    if camera is None:
-        error("Get camera returned None!")
-        return
-    return camera
-
-
-async def reolink_start():
+async def reolink_run():
     """ The main loop. """
-    camera = get_camera()
-
-    try:
-        await camera.get_host_data()
-        await camera.get_states()
-    except ReolinkTimeoutError as _ex:
-        error("Timeout error, camera unreachable!")
-        return
-    except Exception as _ex:
-        error("Camera update host_data/states failed: "+str(_ex))
-        if str(_ex).startswith("Login error"):
-            error("Login error - this error can only be resolved by restarting " +
-                  "the Camera and after that restarting the Domoticz server!")
-        return
-
-    if not camera_startup(camera):
-        return
-
-    # log("Camera name       : " + str(camera.camera_name(0)))
-    # log("Camera model      : " + str(camera.model))
-    # log("Camera mac_address: " + str(camera.mac_address))
-    # log("Camera doorbell   : " + str(camera.is_doorbell(0)))
-
     global RUNNING
     RUNNING = True
-    await camera_subscribe(camera, webhook_url)
 
     ticks = 0
     while RUNNING:
-
-        # if camera is None:
-        #    error("Camera is None!")
-        #    camera = get_camera_host(camera_ipaddress, camera_username,
-        #                             camera_password, camera_port)
-
-        ticks = ticks + 1
-        if ticks > 10:
+        try:
+            camera = get_camera()
+            await camera.get_host_data()
             await camera.get_states()
-            renewtimer = camera.renewtimer()
-            if renewtimer <= 100 or not camera.subscribed(SubType.push):
-                debug("Renew camera subscription!")
-                if not await camera.renew():
-                    RUNNING = await camera_subscribe(camera, webhook_url)
-            ticks = 0
-        await asyncio.sleep(1)
+        except LoginError as _ex:
+            if "password wrong" in str(_ex):
+                error("Failed to login - wrong password!")
+                return
+            if "password wrong" in str(_ex):
+                error("Failed to login - username invalid!")
+                return
+            error("Login error: "+str(_ex))
+            return
+        except CredentialsInvalidError as _ex:
+            error("Login failed - credentials error! "+str(_ex))
+            return
+        except ReolinkTimeoutError as _ex:
+            error("Timeout error, camera unreachable!")
+            continue
+        except ReolinkError as _ex:
+            error("Camera init failed! Reolinkerror: "+str(_ex))
+            continue
+        except Exception as _ex:
+            error("Camera init failed, unknown error: "+str(_ex))
+            return
+
+        if not camera_startup(camera):
+            continue
+
+        if not await camera_subscribe(camera, webhook_url):
+            continue
+
+        ticks = 0
+        while RUNNING:
+
+            # if camera is None:
+            #    error("Camera is None!")
+            #    camera = get_camera_host(camera_ipaddress, camera_username,
+            #                             camera_password, camera_port)
+
+            ticks = ticks + 1
+            if ticks > 10:
+                try:
+                    await camera.get_states()
+
+                except ReolinkTimeoutError as _ex:
+                    error("Timeout error, camera unreachable!")
+                    break
+                except Exception as _ex:
+                    error("Camera update states failed: "+str(_ex))
+                    break
+
+                renewtimer = camera.renewtimer()
+                if renewtimer <= 100 or not camera.subscribed(SubType.push):
+                    debug("Renew camera subscription!")
+                    if not await camera.renew():
+                        RUNNING = await camera_subscribe(camera, webhook_url)
+                ticks = 0
+            await asyncio.sleep(1)
 
     log("Camera logout!")
     try:
@@ -214,7 +235,7 @@ async def reolink_start():
 
 
 def camera_process_post_request(request):
-    """Handle incoming webhook from Reolink camera for inbound messages and calls."""
+    """Handle incoming webhook from Reolink camera for inbound messages and calls when in standalone mode."""
 
     # log("Received request:\n"
     #    + "Method: {}\n".format(request.method))
@@ -308,7 +329,7 @@ camera_thread.start()
 
 try:
     while RUNNING:
-        time.sleep(1)
+        time.sleep(5)
         if not camera_thread.is_alive():
             debug("camera_thread dead - restart in 60 seconds!")
             camera_thread.join()
