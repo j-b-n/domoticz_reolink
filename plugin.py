@@ -131,14 +131,9 @@ class BasePlugin:
         # Create webhook
         ##
         self.httpClientConn = Domoticz.Connection(Name="Camera webhook", Transport="TCP/IP", Protocol="HTTP",
-                                                  Address="127.0.0.1", Port=self.webhook_port)
+                                                  Address=self.webhook_host, Port=self.webhook_port)
         self.httpClientConn.Listen()
 
-#        self.camhookConn = Domoticz.Connection(Name="Camera process webhook", Transport="TCP/IP",
-#                                               Protocol="JSON",
-#                                               Address="127.0.0.1",
-#                                               Port=self.webhook_port)
-#        self.camhookConn.Listen()
 
         self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop, args=(self,))
         self.camera_thread.start()
@@ -170,7 +165,7 @@ class BasePlugin:
     def camera_loop(self):
         try:
             path = Parameters['HomeFolder'] + "camera.py"
-            self.process = subprocess.Popen(["python",
+            self.process = subprocess.Popen(["python3",
                                              path,
                                              self.camera_ipaddress,
                                              self.camera_port,
@@ -195,7 +190,7 @@ class BasePlugin:
                 if self.process is not None:
                     if self.process.poll() is not None:
                         Domoticz.Error("Camera process dead: "+str(self.process.returncode))
-                        self.process = subprocess.Popen(["python", path,
+                        self.process = subprocess.Popen(["python3", path,
                                                          self.camera_ipaddress, self.camera_port,
                                                          self.camera_username, self.camera_password,
                                                          self.webhook_host, self.webhook_port])

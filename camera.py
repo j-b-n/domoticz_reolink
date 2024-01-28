@@ -6,6 +6,7 @@ for debugging.
 
 """
 import time
+import sys
 import threading
 import json
 import asyncio
@@ -14,7 +15,7 @@ import logging.handlers
 import argparse
 from reolink_aio.api import Host
 from reolink_aio.enums import SubType
-from reolink_aio.exceptions import ReolinkError, SubscriptionError
+from reolink_aio.exceptions import ReolinkError, SubscriptionError, ReolinkConnectionError, ReolinkTimeoutError
 import requests
 import webhook_listener
 import reolink_utils
@@ -33,12 +34,8 @@ def post(msg):
             logger.debug("Post Error: %s", str(_ex))
 
 
-
 def log(msg):
     """ Send a Log message to the server, message in msg """
-    if PRINTMODE:
-        print(msg)
-        return
     if DOLOGGING:
         logger.debug(msg)
         return
@@ -166,6 +163,9 @@ async def reolink_start():
     try:
         await camera.get_host_data()
         await camera.get_states()
+    except ReolinkTimeoutError as _ex:
+        error("Timeout error, camera unreachable!")
+        return
     except Exception as _ex:
         error("Camera update host_data/states failed: "+str(_ex))
         if str(_ex).startswith("Login error"):
@@ -257,7 +257,7 @@ PRINTMODE = False
 DOLOGGING = args.log
 standalone = args.standalone
 
-if not DOLOGGING:
+if standalone and not DOLOGGING:
     PRINTMODE = True
     DOLOGGING = True
 
@@ -274,13 +274,16 @@ if DOLOGGING:
     logger = logging.getLogger("Camera")
     logger.setLevel(logging.DEBUG)
 
-    handler = logging.handlers.TimedRotatingFileHandler(LOG_FILENAME,
-                                                        when='midnight',
-                                                        interval=1,
-                                                        backupCount=5,
-                                                        encoding=None,
-                                                        delay=False,
-                                                        utc=False)
+    if PRINTMODE:
+        handler = logging.StreamHandler(sys.stdout)
+    else:
+        handler = logging.handlers.TimedRotatingFileHandler(LOG_FILENAME,
+                                                            when='midnight',
+                                                            interval=1,
+                                                            backupCount=5,
+                                                            encoding=None,
+                                                            delay=False,
+                                                            utc=False)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
     handler.setFormatter(formatter)
 
@@ -292,8 +295,7 @@ if DOLOGGING:
 
 
 if standalone:
-    print("Running in standalone mode! Terminate by pressing ctrl-c")
-    log("Running in standalone mode!")
+    log("Running in standalone mode! Terminate by pressing ctrl-c")
     webhooks = webhook_listener.Listener(port=int(webhook_port),
                                          handlers={"POST": camera_process_post_request})
     webhooks.start()
@@ -308,8 +310,9 @@ try:
     while RUNNING:
         time.sleep(1)
         if not camera_thread.is_alive():
-            log("camera_thread dead - restart!")
+            debug("camera_thread dead - restart in 60 seconds!")
             camera_thread.join()
+            time.sleep(60)
             camera_thread = threading.Thread(name="Camera thread",
                                              target=async_loop,
                                              daemon=False,
@@ -319,7 +322,7 @@ try:
 except KeyboardInterrupt:
     log("Keyboard interrupt!")
     if standalone:
-        print("Terminating program, please wait!")
+        log("Terminating program, please wait!")
 
 RUNNING = False
 debug("Terminate processes!")
@@ -345,4 +348,4 @@ except KeyboardInterrupt:
 
 debug("Terminated camera program!")
 if standalone:
-    print("Program terminated")
+    log("Program terminated")
