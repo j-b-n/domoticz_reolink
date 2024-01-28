@@ -33,16 +33,16 @@ git pull
 sudo python3 -m pip install -r requirements.txt --upgrade
 ````
 ### Please note!
-The first approach using async_io in the plugin.py file is not stable enough on my test system. I have changed to a different approach where the communication with the Reolink camera is handled in a separated subprocess (ie [camera.py](https://github.com/j-b-n/domoticz_reolink/blob/main/camera.py)). You can test the communication with the camera using [test.py](https://github.com/j-b-n/domoticz_reolink/blob/main/test.py). It uses [secrets.cfg](https://github.com/j-b-n/domoticz_reolink/blob/main/secrets.cfg) for configuration.
+The first approach using async_io in the plugin.py file is not stable enough on my test system. I have changed to a different approach where the communication with the Reolink camera is handled in a separated subprocess (ie [camera.py](https://github.com/j-b-n/domoticz_reolink/blob/main/camera.py)). You can test the communication with the camera using [capera.py](https://github.com/j-b-n/domoticz_reolink/blob/main/camera.py) with --standalone thus using the same process that Domoticz is using but in standalone mode.
 
 I will continue to explore a solution that only utilizes plugin.py.
 
-### Frequently Asked Questions (FAQ)
+## Frequently Asked Questions (FAQ)
 
-**I get this error message: "Unit creation failed, Domoticz settings prevent accepting new devices."**
+### I get this error message: "Unit creation failed, Domoticz settings prevent accepting new devices."
 You need to allow Domoticz to create new devices. That is either "Allow for 5 minutes" or toggle "Accept new Hardware Devices" to on.
 
-### Acknowledgment
+## Acknowledgment
 This plugin use reolink_aio created by @starkillerOG found here https://github.com/starkillerOG/reolink_aio.
 I also used code and inspiration from [Zigbee for Domoticz](https://github.com/zigbeefordomoticz)
 
