@@ -157,19 +157,31 @@ async def camera_subscribe(camera, _camhook_url):
         return False
     return True
 
+def increment_delay_reconnect (i) -> int:
+    if i < 9*60:
+        i = i + 60
+    return i
+
+
 
 async def reolink_run():
     """ The main loop. """
     global RUNNING
     RUNNING = True
+    delay_reconnect = 0
 
     ticks = 0
     while RUNNING:
         try:
+            if delay_reconnect > 0:
+                debug("Delay startup "+str(delay_reconnect)+" seconds!")
+                await asyncio.sleep(delay_reconnect)
             camera = get_camera()
             await camera.get_host_data()
             await camera.get_states()
+            delay_reconnect = 0
         except LoginError as _ex:
+            delay_reconnect = increment_delay_reconnect(delay_reconnect)
             if "password wrong" in str(_ex):
                 error("Failed to login - wrong password!")
                 return
@@ -179,15 +191,19 @@ async def reolink_run():
             error("Login error: "+str(_ex))
             return
         except CredentialsInvalidError as _ex:
+            delay_reconnect = increment_delay_reconnect(delay_reconnect)
             error("Login failed - credentials error! "+str(_ex))
             return
         except ReolinkTimeoutError as _ex:
+            delay_reconnect = increment_delay_reconnect(delay_reconnect)
             error("Timeout error, camera unreachable!")
             continue
         except ReolinkError as _ex:
+            delay_reconnect = increment_delay_reconnect(delay_reconnect)
             error("Camera init failed! Reolinkerror: "+str(_ex))
             continue
         except Exception as _ex:
+            delay_reconnect = increment_delay_reconnect(delay_reconnect)
             error("Camera init failed, unknown error: "+str(_ex))
             return
 
@@ -199,14 +215,8 @@ async def reolink_run():
 
         ticks = 0
         while RUNNING:
-
-            # if camera is None:
-            #    error("Camera is None!")
-            #    camera = get_camera_host(camera_ipaddress, camera_username,
-            #                             camera_password, camera_port)
-
             ticks = ticks + 1
-            if ticks > 10:
+            if ticks > 30:
                 try:
                     await camera.get_states()
 
