@@ -198,11 +198,11 @@ class BasePlugin:
         except Exception as err:
             Domoticz.Error("handleMessage: "+str(err))
 
-        Domoticz.Log("Terminate camera process!")
+        Domoticz.Debug("Terminate camera process!")
         self.process.terminate()
         while self.process.poll() is None:
             time.sleep(1)
-            Domoticz.Log("Waiting for process to die!")
+            Domoticz.Debug("Waiting for process to die!")
             self.process.kill()
 
     def onStop(self):
@@ -342,6 +342,11 @@ class BasePlugin:
                     Domoticz.Debug(str(json_obj["Debug"]))
                 if "Error" in json_obj:
                     Domoticz.Error(str(json_obj["Error"]))
+
+            if json_obj["Type"] == "Stop":
+                self.stop_plugin = True
+                Domoticz.Error(str(json_obj["Message"]))
+
         except Exception as err:
             Domoticz.Error("Logging error: "+str(err)+
                                    " ->" + data)
@@ -377,6 +382,8 @@ class BasePlugin:
         Domoticz.Debug("onDisconnect called for connection '"+Connection.Name+"'.")
 
     def onHeartbeat(self):
+        if self.stop_plugin:
+            return
         #
         # Make sure the device is turned off even if a timer for some reson has failed!
         # Resons might be a restart of Domoticz.

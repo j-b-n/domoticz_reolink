@@ -65,6 +65,15 @@ def debug(msg):
                  'Debug': msg}
         post(myobj)
 
+def stop(msg):
+    """ Send a Stop message to the server, message in msg """
+    if DOLOGGING:
+        logger.debug(msg)
+    else:
+        myobj = {'Type': 'Stop',
+                 'Message': msg}
+        post(myobj)
+
 
 def get_or_create_eventloop():
     """ Get or create an asyncio eventloop """
@@ -81,14 +90,6 @@ def camera_startup(camera):
     """ Function meant to be called at startup and sends
         camera information.
     """
-    if not camera.rtsp_enabled:
-        error("Camera RTSP is not enabled. Please enable it!")
-        return False
-
-    if not camera.onvif_enabled:
-        error("Camera ONVIF is not enabled. Please enable it!")
-        return False
-
     camera_info = {}
     camera_info["Type"] = 'Startup'
     camera_info["Name"] = str(camera.camera_name(0))
@@ -112,6 +113,19 @@ def camera_startup(camera):
         log(str(camera_info))
     else:
         post(camera_info)
+    return True
+
+
+def camera_init(camera) -> bool:
+    """" Check requirements for the camera. """
+    if not camera.rtsp_enabled:
+        stop("Camera RTSP is not enabled. Please enable and restart the plugin!")
+        return False
+
+    if not camera.onvif_enabled:
+        stop("Camera ONVIF is not enabled. Please enable and restart the plugin!")
+        return False
+
     return True
 
 
@@ -144,11 +158,11 @@ def get_camera():
     camera = get_camera_host(camera_ipaddress, camera_username, camera_password, camera_port)
     if camera is None:
         error("Get camera returned None!")
-        return
+        return None
     return camera
 
 
-async def camera_subscribe(camera, _camhook_url):
+async def camera_subscribe(camera, _camhook_url) -> bool:
     """ Subsribe to events from the camera."""
     try:
         await camera.subscribe(_camhook_url, SubType.push, retry=False)
@@ -161,7 +175,6 @@ def increment_delay_reconnect (i) -> int:
     if i < 9*60:
         i = i + 60
     return i
-
 
 
 async def reolink_run():
@@ -205,6 +218,9 @@ async def reolink_run():
         except Exception as _ex:
             delay_reconnect = increment_delay_reconnect(delay_reconnect)
             error("Camera init failed, unknown error: "+str(_ex))
+            return
+
+        if not camera_init(camera):
             return
 
         if not camera_startup(camera):
