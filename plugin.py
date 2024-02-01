@@ -156,11 +156,11 @@ class BasePlugin:
             i = i + 1
 
         if 'Is doorbell' in camera_info and camera_info['Is doorbell']:
-            supported.append('doorbell')
+            str(supported.append('Doorbell'))
 
-        for _device in self.CAMERADEVICES:
-            if _device not in Devices and _device in supported:
-                create_device(self.DEVICENAME[_device], self.CAMERADEVICES[_device])
+        for _device in supported:
+            if self.DEVICENAME[_device] not in Devices:
+                create_device(self.DEVICENAME[_device], self.CAMERADEVICES[self.DEVICENAME[_device]])
 
     def camera_loop(self):
         try:
@@ -464,7 +464,7 @@ def create_device(device_name, device_id):
     else:
         switch_type = 8
 
-    Domoticz.Log("Create - device_name: " + str(device_name) + " id: " + str(device_id) +
+    Domoticz.Log("Create device " + str(device_name) + " with id " + str(device_id) +
                  " Switchtype: " + str(switch_type))
     Domoticz.Unit(Name=device_name, DeviceID=device_name, Unit=1,
                   Type=244, Subtype=73, Switchtype=switch_type, Used=1).Create()
