@@ -292,8 +292,7 @@ def camera_process_post_request(request):
             body_raw = request.body.read(length)
         else:
             body_raw = '{}'
-
-        body_raw = body_raw.decode('utf-8')
+        # body_raw = body_raw.decode('utf-8')
     except ValueError:
         log("Error!")
 
