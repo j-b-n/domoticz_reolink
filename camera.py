@@ -16,8 +16,7 @@ import argparse
 from reolink_aio.api import Host
 from reolink_aio.enums import SubType
 from reolink_aio.exceptions import (ReolinkError, SubscriptionError,
-                                    ReolinkConnectionError, ReolinkTimeoutError,
-                                    CredentialsInvalidError, LoginError)
+                                    ReolinkTimeoutError, CredentialsInvalidError, LoginError)
 import requests
 import webhook_listener
 import reolink_utils
@@ -64,6 +63,7 @@ def debug(msg):
         myobj = {'Type': 'Log',
                  'Debug': msg}
         post(myobj)
+
 
 def stop(msg):
     """ Send a Stop message to the server, message in msg """
@@ -146,16 +146,44 @@ def get_camera_host(_camera_ipaddress, _camera_username, _camera_password, _came
     camera_port the port the camera uses.
     """
     try:
-        debug("Connect camera at: "+str(camera_ipaddress))
+        debug("Connect camera at: " + str(camera_ipaddress))
         camera_host = Host(_camera_ipaddress, _camera_username, _camera_password, port=_camera_port)
         return camera_host
     except ReolinkError as err:
-        error("get_camera_host failed with ReolinkError: "+str(err))
+        error("get_camera_host failed with ReolinkError: " + str(err))
         return None
 
 
 def get_camera():
-    camera = get_camera_host(camera_ipaddress, camera_username, camera_password, camera_port)
+    try:
+        camera = get_camera_host(camera_ipaddress, camera_username, camera_password, camera_port)
+    except LoginError as _ex:
+        delay_reconnect = increment_delay_reconnect(delay_reconnect)
+        if "password wrong" in str(_ex):
+            error("Failed to login - wrong password!")
+            return None
+        if "password wrong" in str(_ex):
+            error("Failed to login - username invalid!")
+            return None
+        error("Login error: " + str(_ex))
+        return None
+    except CredentialsInvalidError as _ex:
+        delay_reconnect = increment_delay_reconnect(delay_reconnect)
+        error("Login failed - credentials error! " + str(_ex))
+        return None
+    except ReolinkTimeoutError:
+        delay_reconnect = increment_delay_reconnect(delay_reconnect)
+        error("Timeout error, camera unreachable!")
+        return -1
+    except ReolinkError as _ex:
+        delay_reconnect = increment_delay_reconnect(delay_reconnect)
+        error("Camera init failed! Reolinkerror: " + str(_ex))
+        return -1
+    except Exception as _ex:
+        delay_reconnect = increment_delay_reconnect(delay_reconnect)
+        error("Camera init failed, unknown error: " + str(_ex))
+        return None
+
     if camera is None:
         error("Get camera returned None!")
         return None
@@ -167,66 +195,65 @@ async def camera_subscribe(camera, _camhook_url) -> bool:
     try:
         await camera.subscribe(_camhook_url, SubType.push, retry=False)
     except SubscriptionError as _ex:
-        error("Camera subscriptionerror failed: "+str(_ex))
+        error("Camera subscriptionerror failed: " + str(_ex))
         return False
     return True
 
-def increment_delay_reconnect (i) -> int:
-    if i < 9*60:
+
+def increment_delay_reconnect(i) -> int:
+    if i < 9 * 60:
         i = i + 60
     return i
+
+
+async def reolink_run_init():
+    global RUNNING
+    delay_reconnect = 0
+
+    while RUNNING:
+        if delay_reconnect > 0:
+            debug("Delay startup " + str(delay_reconnect) + " seconds!")
+            await asyncio.sleep(delay_reconnect)
+        camera = get_camera()
+        if camera is None:
+            delay_reconnect = increment_delay_reconnect(delay_reconnect)
+            continue
+        if camera == -1:
+            return
+        await camera.get_host_data()
+        await camera.get_states()
+        delay_reconnect = 0
+
+        if not camera_init(camera):
+            return False
+
+        if not camera_startup(camera):
+            continue
+
+        if not await camera_subscribe(camera, webhook_url):
+            continue
+        return camera
+    return False
+
+
+async def camera_logout(camera):
+    log("Camera logout!")
+    try:
+        if camera is not None:
+            await camera.unsubscribe()
+            await camera.logout()
+    except SubscriptionError as _err:
+        error("Camera unsubscribe failed: " + str(_err))
 
 
 async def reolink_run():
     """ The main loop. """
     global RUNNING
     RUNNING = True
-    delay_reconnect = 0
 
-    ticks = 0
     while RUNNING:
-        try:
-            if delay_reconnect > 0:
-                debug("Delay startup "+str(delay_reconnect)+" seconds!")
-                await asyncio.sleep(delay_reconnect)
-            camera = get_camera()
-            await camera.get_host_data()
-            await camera.get_states()
-            delay_reconnect = 0
-        except LoginError as _ex:
-            delay_reconnect = increment_delay_reconnect(delay_reconnect)
-            if "password wrong" in str(_ex):
-                error("Failed to login - wrong password!")
-                return
-            if "password wrong" in str(_ex):
-                error("Failed to login - username invalid!")
-                return
-            error("Login error: "+str(_ex))
-            return
-        except CredentialsInvalidError as _ex:
-            delay_reconnect = increment_delay_reconnect(delay_reconnect)
-            error("Login failed - credentials error! "+str(_ex))
-            return
-        except ReolinkTimeoutError as _ex:
-            delay_reconnect = increment_delay_reconnect(delay_reconnect)
-            error("Timeout error, camera unreachable!")
-            continue
-        except ReolinkError as _ex:
-            delay_reconnect = increment_delay_reconnect(delay_reconnect)
-            error("Camera init failed! Reolinkerror: "+str(_ex))
-            continue
-        except Exception as _ex:
-            delay_reconnect = increment_delay_reconnect(delay_reconnect)
-            error("Camera init failed, unknown error: "+str(_ex))
-            return
-
-        if not camera_init(camera):
-            return
-
-        if not camera_startup(camera):
-            continue
-
-        if not await camera_subscribe(camera, webhook_url):
+        camera = await reolink_run_init()
+        if camera is None:
             continue
 
         ticks = 0
@@ -235,12 +262,11 @@ async def reolink_run():
             if ticks > 30:
                 try:
                     await camera.get_states()
-
-                except ReolinkTimeoutError as _ex:
+                except ReolinkTimeoutError:
                     error("Timeout error, camera unreachable!")
                     break
                 except Exception as _ex:
-                    error("Camera update states failed: "+str(_ex))
+                    error("Camera update states failed: " + str(_ex))
                     break
 
                 renewtimer = camera.renewtimer()
@@ -251,13 +277,7 @@ async def reolink_run():
                 ticks = 0
             await asyncio.sleep(1)
 
-    log("Camera logout!")
-    try:
-        await camera.unsubscribe()
-    except SubscriptionError as _err:
-        error("Camera unsubscribe failed: "+str(_err))
-
-    await camera.logout()
+    await camera_logout(camera)
 
 
 def camera_process_post_request(request):
@@ -281,9 +301,9 @@ def camera_process_post_request(request):
         parse_result = reolink_utils.reolink_parse_soap(body_raw)
         log(parse_result)
     except Exception as _ex:
-        log("Failed to parse message: " + str(_ex) +
-            " Starts with: " + str(body_raw)[:10] +
-            " Ends with: " + str(body_raw)[-10:])
+        log("Failed to parse message: " + str(_ex)
+            + " Starts with: " + str(body_raw)[:10]
+            + " Ends with: " + str(body_raw)[-10:])
 
 
 parser = argparse.ArgumentParser()
@@ -314,8 +334,8 @@ camera_username = args.camera_username
 camera_password = args.camera_password
 webhook_host = args.webhook_host
 webhook_port = args.webhook_port
-webhook_url = "http://" + webhook_host+":" + str(webhook_port)
-camhook_url = "http://" + camera_ipaddress+":" + str(camera_port)
+webhook_url = "http://" + webhook_host + ":" + str(webhook_port)
+camhook_url = "http://" + camera_ipaddress + ":" + str(camera_port)
 
 if DOLOGGING:
     logger = logging.getLogger("Camera")
@@ -336,9 +356,9 @@ if DOLOGGING:
 
     logger.addHandler(handler)
 
-    debug("args: "+str(args))
-    debug("webhook_url: "+webhook_url)
-    debug("camhook_url: "+camhook_url)
+    debug("args: " + str(args))
+    debug("webhook_url: " + webhook_url)
+    debug("camhook_url: " + camhook_url)
 
 
 if standalone:
@@ -382,12 +402,12 @@ try:
     # Wait until queue thread has exited
     while threading.active_count() > 1:
         RUNNING = False
-        log("Threads still active: "+str(threading.active_count())+", should be 1.")
+        log("Threads still active: " + str(threading.active_count()) + ", should be 1.")
         for thread in threading.enumerate():
             if thread.name != threading.current_thread().name:
-                log("'" + thread.name +
-                    "' is still running, waiting otherwise Domoticz will " +
-                    "abort on plugin exit.")
+                log("'" + thread.name
+                    + "' is still running, waiting otherwise Domoticz will "
+                    + "abort on plugin exit.")
         time.sleep(2)
         log("Threads: " + str(threading.active_count()))
 except KeyboardInterrupt:

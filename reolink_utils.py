@@ -3,6 +3,15 @@ from xml.etree import ElementTree as XML
 import os
 
 
+def parse_data_element(rule, data_element, result) -> dict:
+    if data_element is None:
+        return result
+    if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
+        result[rule] = True
+        result["Any"] = True
+    return result
+
+
 def reolink_parse_soap(data) -> dict:
     """ This function takes data and parse it according to the Reolink specification
      and returns true for any of the types that is detected. """
@@ -19,12 +28,11 @@ def reolink_parse_soap(data) -> dict:
     if data is None or len(data) < 100:
         return result
 
-
     root = XML.fromstring(data)
 
     for message in root.iter('{http://docs.oasis-open.org/wsn/b-2}NotificationMessage'):
-        topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='" +
-                                     "http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
+        topic_element = message.find("{http://docs.oasis-open.org/wsn/b-2}Topic[@Dialect='"
+                                     + "http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet']")
         if topic_element is None:
             continue
         rule = os.path.basename(topic_element.text)
@@ -33,18 +41,11 @@ def reolink_parse_soap(data) -> dict:
 
         if rule == "Motion":
             data_element = message.find(".//{http://www.onvif.org/ver10/schema}SimpleItem[@Name='IsMotion']")
-            if data_element is None:
-                continue
-            if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
-                result[rule] = True
-                result["Any"] = True
+            result = parse_data_element(rule, data_element, result)
         elif rule in rules:
             data_element = message.find(".//{http://www.onvif.org/ver10/schema}SimpleItem[@Name='State']")
-            if data_element is None:
-                continue
-            if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
-                result[rule] = True
-                result["Any"] = True
+            result = parse_data_element(rule, data_element, result)
+
     return result
 
 
