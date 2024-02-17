@@ -45,7 +45,7 @@ def reolink_parse_soap(data) -> dict:
             if "Value" in data_element.attrib and data_element.attrib["Value"] == "true":
                 result[rule] = True
                 result["Any"] = True
-        return result
+    return result
 
 
 if __name__ == "__main__":
