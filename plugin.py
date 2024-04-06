@@ -399,7 +399,7 @@ class BasePlugin:
         for device in self.CAMERADEVICES:
             if device in Devices:
                 for unitnr in Devices[device].Units:
-                    if (Devices[device].Units[unitnr].sValue == "1"):
+                    if (Devices[device].Units[unitnr].sValue == "1" or Devices[device].Units[unitnr].sValue == "On"):
                         now = datetime.now()
                         devicetime = datetime.strptime(Devices[device].Units[unitnr].LastUpdate, '%Y-%m-%d %H:%M:%S')
                         td = timedelta(seconds=int(self.motion_resettime) + 60)

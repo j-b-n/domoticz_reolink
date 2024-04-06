@@ -1,2 +1,2 @@
-reolink_aio >= 0.8.7
+reolink_aio >= 0.8.9
 webhook-listener >= 1.2.0
