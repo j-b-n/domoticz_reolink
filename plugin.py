@@ -82,9 +82,9 @@ class BasePlugin:
 
     CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3, "Vehicle": 4, "Dog_cat": 5, "Face": 6}
     DEVICENAME = {"Doorbell": "Doorbell", "Motion": "Motion", "People": "Person",
-                  "Vehicle": "Vehicle", "Dog_cat": "Animal", "Face": "Face"}
-    RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person"}
-    THREADDEVICES = ["Motion", "Person"]  # Create an "off" thread for these devices!
+                  "Vehicle": "Vehicle", "Dog_cat": "Animal", "Face": "Face", "Animal":"Animal"}
+    RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person", "Dog_cat":"Animal", "Animal":"Animal"}
+    THREADDEVICES = ["Motion", "Person", "Animal"]  # Create an "off" thread for these devices!
     threads = {}
 
     def __init__(self):

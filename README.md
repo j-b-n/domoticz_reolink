@@ -23,6 +23,7 @@ and might not work for other cameras!
 Install by navigating to your Domoticz plugin folder (example: /home/pi/domoticz/plugins).
 ````
 git clone https://github.com/j-b-n/domoticz_reolink
+cd domoticz_reolink
 sudo python3 -m pip install -r requirements.txt --upgrade
 ````
 
