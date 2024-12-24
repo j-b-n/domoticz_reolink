@@ -152,8 +152,11 @@ class BasePlugin:
             supported[i] = x.capitalize()
             i = i + 1
 
-        if 'Is doorbell' in camera_info and camera_info['Is doorbell']:
+        if 'Is doorbell' in camera_info and str(camera_info['Is doorbell']) == 'True':
             str(supported.append('Doorbell'))
+
+        #Domoticz.Log('Camera_info: '+str(camera_info))
+        #Domoticz.Log('Supported: '+str(supported))
 
         for _device in supported:
             if self.DEVICENAME[_device] not in Devices:
