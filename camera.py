@@ -30,7 +30,17 @@ def check_runtime():
     """ Check the current runtime so it complies with the requirements."""
 
     requirements = {}
-    requirements["reolink_aio"] = '0.9.0'
+
+    debug("Python version: "+sys.version)
+
+    if sys.version_info[0] < 3:
+        error("Wrong Python version: "+sys.version)
+        return False
+
+    if sys.version_info[1] < 11:
+        requirements["reolink_aio"] = '0.9.0'
+    else:
+        requirements["reolink_aio"] = '0.11.6'
 
     for module in requirements:
         req_version = requirements[module]
@@ -39,7 +49,7 @@ def check_runtime():
             debug("Version: "+module+" "+_version+" == "+req_version)
         else:
             error("Version: "+module+" "+_version+" != "+req_version)
-            return False
+            #return False
     return True
 
 def post(msg):
