@@ -1,2 +1,3 @@
-reolink_aio >= 0.9.0
+-c constraints.txt
+reolink_aio
 webhook-listener >= 1.2.0

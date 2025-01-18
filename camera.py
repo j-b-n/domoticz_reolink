@@ -12,18 +12,35 @@ import json
 import asyncio
 import logging
 import logging.handlers
+from importlib.metadata import version
 import argparse
+import requests
+import webhook_listener
 from reolink_aio.api import Host
 from reolink_aio.enums import SubType
 from reolink_aio.exceptions import (ReolinkError, SubscriptionError,
                                     ReolinkTimeoutError, CredentialsInvalidError, LoginError)
-import requests
-import webhook_listener
 import reolink_utils
+
 
 LOG_FILENAME = '/tmp/camera.log'
 RUNNING = False
 
+def check_runtime():
+    """ Check the current runtime so it complies with the requirements."""
+
+    requirements = {}
+    requirements["reolink_aio"] = '0.9.0'
+
+    for module in requirements:
+        req_version = requirements[module]
+        _version = str(version(module))
+        if _version == req_version:
+            debug("Version: "+module+" "+_version+" == "+req_version)
+        else:
+            error("Version: "+module+" "+_version+" != "+req_version)
+            return False
+    return True
 
 def post(msg):
     """ Post msg to the webhook_url"""
@@ -359,6 +376,9 @@ if DOLOGGING:
     debug("webhook_url: " + webhook_url)
     debug("camhook_url: " + camhook_url)
 
+if not check_runtime():
+    debug("Runtime environment not met. Terminating!")
+    sys.exit()
 
 if standalone:
     log("Running in standalone mode! Terminate by pressing ctrl-c")
