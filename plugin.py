@@ -80,10 +80,10 @@ import DomoticzEx as Domoticz
 
 class BasePlugin:
 
-    CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3, "Vehicle": 4, "Dog_cat": 5, "Face": 6}
-    DEVICENAME = {"Doorbell": "Doorbell", "Motion": "Motion", "People": "Person",
-                  "Vehicle": "Vehicle", "Dog_cat": "Animal", "Face": "Face", "Animal":"Animal"}
-    RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person", "Dog_cat":"Animal", "Animal":"Animal"}
+    CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3, "Vehicle": 4, "Animal": 5, "Face": 6}
+    DEVICENAME = {"Doorbell": "Doorbell", "Motion": "Motion", "People": "Person", "Person": "Person",
+                  "Vehicle": "Vehicle", "Dog_cat": "Animal", "Face": "Face", "Animal": "Animal"}
+    RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person", "Dog_cat": "Animal", "Animal": "Animal"}
     THREADDEVICES = ["Motion", "Person", "Animal"]  # Create an "off" thread for these devices!
     threads = {}
 
@@ -159,8 +159,14 @@ class BasePlugin:
         #Domoticz.Log('Supported: '+str(supported))
 
         for _device in supported:
-            if self.DEVICENAME[_device] not in Devices:
-                create_device(self.DEVICENAME[_device], self.CAMERADEVICES[self.DEVICENAME[_device]])
+            # Check if device name exists in the mapping
+            if _device not in self.DEVICENAME:
+                Domoticz.Debug(f"Unknown device type: {_device}, skipping device creation")
+                continue
+            
+            device_name = self.DEVICENAME[_device]
+            if device_name not in Devices:
+                create_device(device_name, self.CAMERADEVICES[device_name])
 
     def camera_loop(self):
         try:
@@ -358,7 +364,7 @@ class BasePlugin:
 
         except Exception as err:
             Domoticz.Error("Logging error: " + str(err)
-                           + " ->" + data)
+                           + " ->" + str(data))
 
     def onMessage(self, connection, message):
         Domoticz.Debug("onMessage called for connection: " + connection.Address + ":" + connection.Port)
