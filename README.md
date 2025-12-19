@@ -50,3 +50,6 @@ I also used code and inspiration from [Zigbee for Domoticz](https://github.com/z
 **Author**
 
 * [j-b-n](https://github.com/j-b-n)
+
+**Contributors ✨**
+* [reavell](https://github.com/reavell)
