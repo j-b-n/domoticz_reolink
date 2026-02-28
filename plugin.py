@@ -115,7 +115,10 @@ class CameraProcess:
         self.camera_password = camera_password
         self.webhook_host = webhook_host
         self.webhook_port = webhook_port
-        self.webhook_url = "http://" + webhook_host + ":" + str(webhook_port)
+        # Internal IPC: always post to loopback — Listen() binds to 0.0.0.0
+        self.webhook_url = "http://127.0.0.1:" + str(webhook_port)
+        # External URL given to the camera for ONVIF callbacks
+        self.camera_webhook_url = "http://" + webhook_host + ":" + str(webhook_port)
         self.RUNNING = False
         self._stop_event = threading.Event()
         self.delay_reconnect = 0
@@ -318,7 +321,7 @@ class CameraProcess:
             # Fallback: ONVIF webhook subscription (only if ONVIF is enabled)
             onvif_ok = False
             if camera.onvif_enabled:
-                onvif_ok = await self.camera_subscribe(camera, self.webhook_url)
+                onvif_ok = await self.camera_subscribe(camera, self.camera_webhook_url)
                 if not onvif_ok:
                     self.debug("ONVIF subscription failed, relying on Baichuan only")
 
@@ -718,14 +721,25 @@ class BasePlugin:
     def onMessage(self, connection, message):
         Domoticz.Debug("onMessage called for connection: " + connection.Address + ":" + connection.Port)
 
-        if connection.Address not in [self.camera_ipaddress, self.webhook_host]:
+        # Allow loopback (internal IPC), the camera IP, and the configured Domoticz IP
+        allowed = {'127.0.0.1', self.camera_ipaddress, self.webhook_host}
+        if connection.Address not in allowed:
             Domoticz.Error("Unauthorized access attempt by " + connection.Address + " - not in approved ip-list!")
+            connection.Send({"Status": "403 Forbidden",
+                             "Headers": {"Content-Type": "text/plain", "Connection": "close"},
+                             "Data": "Forbidden"})
             return
 
         if "Headers" not in message:
             return
         if "Data" not in message:
             return
+
+        # Always send HTTP 200 so the caller (requests.post / camera) doesn't see a disconnect
+        connection.Send({"Status": "200 OK",
+                         "Headers": {"Content-Type": "text/plain", "Connection": "close"},
+                         "Data": ""})
+
         if "Content-Type" in message["Headers"]:
             if message["Headers"]["Content-Type"] == "application/json":
                 self.parse_json_message(message["Data"])
