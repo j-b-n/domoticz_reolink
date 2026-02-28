@@ -116,6 +116,7 @@ class CameraProcess:
         self.RUNNING = False
         self._stop_event = threading.Event()
         self.delay_reconnect = 0
+        self._camera = None
 
     def stop(self):
         """Signal the camera process to stop."""
@@ -180,16 +181,26 @@ class CameraProcess:
         return True
 
     def camera_init(self, camera) -> bool:
-        """" Check requirements for the camera. """
-        if not camera.rtsp_enabled:
-            self.stop_msg("Camera RTSP is not enabled. Please enable and restart the plugin!")
-            return False
-
+        """Check camera settings. ONVIF is only required for the fallback subscription."""
         if not camera.onvif_enabled:
-            self.stop_msg("Camera ONVIF is not enabled. Please enable and restart the plugin!")
-            return False
-
+            self.debug("ONVIF is not enabled on the camera. Baichuan TCP events will be used as primary source.")
         return True
+
+    def baichuan_event_callback(self):
+        """Called by the Baichuan TCP event system on motion/AI/Visitor events."""
+        if self._camera is None:
+            return
+        event = {
+            "Type": "Event",
+            "Motion": self._camera.motion_detected(0),
+            "Visitor": self._camera.visitor_detected(0),
+            "PeopleDetect": self._camera.ai_detected(0, "people"),
+            "VehicleDetect": self._camera.ai_detected(0, "vehicle"),
+            "Dog_cat": self._camera.ai_detected(0, "dog_cat"),
+            "Face": self._camera.ai_detected(0, "face"),
+        }
+        # requests.post is blocking; run in a thread to avoid stalling the asyncio event loop
+        threading.Thread(target=self.post, args=(event,), daemon=True).start()
 
     def get_camera_host(self, _camera_ipaddress, _camera_username, _camera_password, _camera_port):
         """ Get the Camera Host from Reolink API."""
@@ -272,15 +283,36 @@ class CameraProcess:
             if not self.camera_startup(camera):
                 continue
 
-            if not await self.camera_subscribe(camera, self.webhook_url):
-                continue
+            # Primary: subscribe to Baichuan TCP push events
+            self._camera = camera
+            try:
+                await camera.baichuan.subscribe_events()
+                camera.baichuan.register_callback(
+                    "domoticz_plugin",
+                    self.baichuan_event_callback,
+                    cmd_id=33,   # AlarmEvent: motion/AI/visitor
+                    channel=0
+                )
+                self.debug("Baichuan event subscription active")
+            except Exception as _ex:
+                self.error("Baichuan subscription failed: " + str(_ex))
+
+            # Fallback: ONVIF webhook subscription (only if ONVIF is enabled)
+            if camera.onvif_enabled:
+                if not await self.camera_subscribe(camera, self.webhook_url):
+                    self.debug("ONVIF subscription failed, relying on Baichuan only")
+
             return camera
         return False
 
     async def camera_logout(self, camera):
         self.log("Camera logout!")
+        self._camera = None
         try:
             if camera is not None:
+                camera.baichuan.unregister_callback("domoticz_plugin")
+                if camera.baichuan.session_active:
+                    await camera.baichuan.unsubscribe_events()
                 await camera.unsubscribe()
                 await camera.logout()
         except SubscriptionError as _err:
@@ -308,11 +340,19 @@ class CameraProcess:
                         self.error("Camera update states failed: " + str(_ex))
                         break
 
-                    renewtimer = camera.renewtimer()
-                    if renewtimer <= 100 or not camera.subscribed(SubType.push):
-                        self.debug("Renew camera subscription!")
-                        if not await camera.renew():
-                            self.RUNNING = await self.camera_subscribe(camera, self.webhook_url)
+                    # Baichuan: keepalive check
+                    try:
+                        await camera.baichuan.check_subscribe_events()
+                    except Exception as _ex:
+                        self.error("Baichuan keepalive failed: " + str(_ex))
+
+                    # ONVIF fallback: renew subscription when needed
+                    if camera.onvif_enabled:
+                        renewtimer = camera.renewtimer()
+                        if renewtimer <= 100 or not camera.subscribed(SubType.push):
+                            self.debug("Renew ONVIF subscription!")
+                            if not await camera.renew():
+                                await self.camera_subscribe(camera, self.webhook_url)
                     ticks = 0
                 await asyncio.sleep(1)
 
@@ -336,7 +376,7 @@ class BasePlugin:
     CAMERADEVICES = {"Doorbell": 1, "Motion": 2, "Person": 3, "Vehicle": 4, "Animal": 5, "Face": 6}
     DEVICENAME = {"Doorbell": "Doorbell", "Motion": "Motion", "People": "Person", "Person": "Person",
                   "Vehicle": "Vehicle", "Dog_cat": "Animal", "Face": "Face", "Animal": "Animal"}
-    RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person", "Dog_cat": "Animal", "Animal": "Animal", "VehicleDetect": "Vehicle"}
+    RULES_DEVICE_MAP = {"Motion": "Motion", "Visitor": "Doorbell", "PeopleDetect": "Person", "Dog_cat": "Animal", "Animal": "Animal", "VehicleDetect": "Vehicle", "Face": "Face"}
     THREADDEVICES = ["Motion", "Person", "Animal", "Vehicle"]  # Create an "off" thread for these devices!
     threads = {}
 
@@ -616,6 +656,17 @@ class BasePlugin:
             if json_obj["Type"] == "Stop":
                 self.stop_plugin = True
                 Domoticz.Error(str(json_obj["Message"]))
+
+            if json_obj["Type"] == "Event":
+                for rule, state in json_obj.items():
+                    if rule == "Type":
+                        continue
+                    if rule in self.RULES_DEVICE_MAP:
+                        device_name = self.RULES_DEVICE_MAP[rule]
+                        try:
+                            self.parse_update_device(bool(state), device_name)
+                        except Exception as ex:
+                            Domoticz.Error("Failed to update device from Baichuan event! Error: " + str(ex))
 
         except Exception as err:
             Domoticz.Error("Logging error: " + str(err)
