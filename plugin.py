@@ -103,6 +103,7 @@ class BasePlugin:
 
         self.task = None
         self.process = None
+        self._stop_event = threading.Event()
 
     def onStart(self):
         global _plugin
@@ -200,7 +201,8 @@ class BasePlugin:
                                                          self.camera_ipaddress, self.camera_port,
                                                          self.camera_username, self.camera_password,
                                                          self.webhook_host, self.webhook_port])
-                time.sleep(15)
+                if self._stop_event.wait(timeout=15):
+                    break
         except Exception as err:
             Domoticz.Error("handleMessage: " + str(err))
 
@@ -214,7 +216,16 @@ class BasePlugin:
     def onStop(self):
         self.running = False
         self.stop_plugin = True
-        self.camera_thread.join()
+        self._stop_event.set()
+
+        # Cancel any pending motion-reset timer threads
+        for device, thread in list(self.threads.items()):
+            if thread is not None and thread.is_alive():
+                thread.cancel()
+
+        self.camera_thread.join(timeout=30)
+        if self.camera_thread.is_alive():
+            Domoticz.Error("Camera thread did not stop within timeout!")
 
         for thread in threading.enumerate():
             if thread.name != threading.current_thread().name:

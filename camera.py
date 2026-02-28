@@ -7,6 +7,7 @@ for debugging.
 """
 import time
 import sys
+import signal
 import threading
 import json
 import asyncio
@@ -25,6 +26,17 @@ import reolink_utils
 
 LOG_FILENAME = '/tmp/camera.log'
 RUNNING = False
+_stop_event = threading.Event()
+
+
+def handle_sigterm(signum, frame):
+    """Handle SIGTERM from Domoticz/plugin so camera shuts down cleanly."""
+    global RUNNING
+    RUNNING = False
+    _stop_event.set()
+
+
+signal.signal(signal.SIGTERM, handle_sigterm)
 
 def check_runtime():
     """ Check the current runtime so it complies with the requirements."""
@@ -404,7 +416,8 @@ camera_thread.start()
 
 try:
     while RUNNING:
-        time.sleep(5)
+        if _stop_event.wait(timeout=5):
+            break
         if not camera_thread.is_alive():
             debug("camera_thread dead - restart in 60 seconds!")
             camera_thread.join()
