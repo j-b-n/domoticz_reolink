@@ -129,7 +129,7 @@ class CameraProcess:
             json_object = json.dumps(msg)
             requests.post(self.webhook_url, json=json_object, timeout=2)
         except requests.exceptions.RequestException as _ex:
-            Domoticz.Debug("Post Error: " + str(_ex))
+            Domoticz.Error("Webhook post to " + self.webhook_url + " failed: " + str(_ex))
 
     def log(self, msg):
         """ Send a Log message to the server, message in msg """
@@ -273,8 +273,22 @@ class CameraProcess:
                 continue
             if camera == -1:
                 return None
-            await camera.get_host_data()
-            await camera.get_states()
+            self.log("Fetching camera data from " + str(self.camera_ipaddress) + "...")
+            try:
+                await camera.get_host_data()
+                await camera.get_states()
+            except ReolinkTimeoutError:
+                self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+                self.error("Timeout fetching camera data - camera unreachable!")
+                continue
+            except ReolinkError as _ex:
+                self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+                self.error("Failed to fetch camera data: " + str(_ex))
+                continue
+            except Exception as _ex:
+                self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+                self.error("Unexpected error fetching camera data: " + str(_ex))
+                continue
             self.delay_reconnect = 0
 
             if not self.camera_init(camera):
