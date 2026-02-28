@@ -23,8 +23,10 @@ Reolink documation</a>
             <li>Camera Username - The username used to login in the camera.</li>
             <li>Camera Password - The password used to login in the camera.</li>
             <li>Camera Port - The port used to communicate with the camera.</li>
-            <li>Domoticz public ipaddress - The ipaddress used by the Domoticz server. Must be reachable by the camera.</li>
-            <li>Webhook port - The port used by the Domoticz server for the webhook port. Must be unused.</li>
+            <li>Domoticz ipaddress (for camera) - The ipaddress of the Domoticz server as seen from the camera.
+                Used as the ONVIF webhook callback address. Must be reachable by the camera.</li>
+            <li>Webhook port - A free TCP port on the Domoticz server. The plugin listens on all interfaces (0.0.0.0)
+                on this port to receive ONVIF events from the camera. Must not be in use by another service.</li>
             <li>Motion reset time - The camera sends an off-signal directly after the on-signal. Use Off for default behavior.
                 Otherwise the off signal will be delayed the configured number of seconds.</li>
            <li>Debug - Debug setting.</li>
@@ -37,7 +39,7 @@ Reolink documation</a>
        <param field="Username" label="Camera Username" width="200px" required="true" default="admin"/>
        <param field="Password" label="Camera Password" width="200px" required="true" default="" password="true"/>
        <param field="Port" label="Camera Port" width="200px" required="false" default="80"/>
-       <param field="Mode1" label="Domoticz public ipaddress" width="200px" required="true" default=""/>
+       <param field="Mode1" label="Domoticz ipaddress (for camera)" width="200px" required="true" default=""/>
        <param field="Mode2" label="Webhook Port" width="200px" required="true" default="8989"/>
        <param field="Mode3" label="Motion reset time" width="150px" required="true">
         <options>
@@ -453,7 +455,7 @@ class BasePlugin:
         # Create webhook
         ##
         self.httpClientConn = Domoticz.Connection(Name="Camera webhook", Transport="TCP/IP", Protocol="HTTP",
-                                                  Address=self.webhook_host, Port=self.webhook_port)
+                                                  Port=self.webhook_port)
         self.httpClientConn.Listen()
         self.camera_thread = threading.Thread(name="Camera thread", target=BasePlugin.camera_loop, args=(self,))
         self.camera_thread.start()
@@ -496,17 +498,17 @@ class BasePlugin:
                 return
 
             # Wait for Domoticz to finish binding the webhook port after onStart() returns.
-            # Poll until the port is actually accepting connections (up to 30 seconds).
+            # Poll 127.0.0.1 (Listen binds to 0.0.0.0, always reachable locally).
             deadline = time.time() + 30
             while time.time() < deadline:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.settimeout(1)
-                    if sock.connect_ex((self.webhook_host, int(self.webhook_port))) == 0:
+                    if sock.connect_ex(('127.0.0.1', int(self.webhook_port))) == 0:
                         break
                 time.sleep(0.5)
             else:
                 Domoticz.Error("Webhook port " + str(self.webhook_port)
-                               + " on " + self.webhook_host + " not available after 30 seconds - aborting!")
+                               + " not available after 30 seconds - aborting!")
                 return
 
             while True:
