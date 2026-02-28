@@ -87,22 +87,16 @@ from reolink_aio.exceptions import (ReolinkError, SubscriptionError,
 
 def check_runtime():
     """ Check the current runtime so it complies with the requirements."""
-    if sys.version_info[0] < 3:
-        Domoticz.Error("Wrong Python version: " + sys.version)
+    if sys.version_info < (3, 11):
+        Domoticz.Error("Python >= 3.11 is required, running: " + sys.version)
         return False
 
-    requirements = {}
-    if sys.version_info[1] < 11:
-        requirements["reolink_aio"] = '0.9.0'
+    req_version = '0.19.0'
+    _version = str(version('reolink_aio'))
+    if _version == req_version:
+        Domoticz.Debug("Version: reolink_aio " + _version + " == " + req_version)
     else:
-        requirements["reolink_aio"] = '0.11.6'
-
-    for module, req_version in requirements.items():
-        _version = str(version(module))
-        if _version == req_version:
-            Domoticz.Debug("Version: " + module + " " + _version + " == " + req_version)
-        else:
-            Domoticz.Error("Version: " + module + " " + _version + " != " + req_version)
+        Domoticz.Error("Version: reolink_aio " + _version + " != " + req_version)
 
     return True
 
