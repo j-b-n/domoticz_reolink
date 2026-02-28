@@ -205,7 +205,7 @@ class CameraProcess:
     def get_camera_host(self, _camera_ipaddress, _camera_username, _camera_password, _camera_port):
         """ Get the Camera Host from Reolink API."""
         try:
-            self.debug("Connect camera at: " + str(_camera_ipaddress))
+            self.log("Connecting to camera at " + str(_camera_ipaddress) + ":" + str(_camera_port))
             camera_host = Host(_camera_ipaddress, _camera_username, _camera_password, port=_camera_port)
             return camera_host
         except ReolinkError as err:
@@ -285,6 +285,7 @@ class CameraProcess:
 
             # Primary: subscribe to Baichuan TCP push events
             self._camera = camera
+            baichuan_ok = False
             try:
                 await camera.baichuan.subscribe_events()
                 camera.baichuan.register_callback(
@@ -293,14 +294,22 @@ class CameraProcess:
                     cmd_id=33,   # AlarmEvent: motion/AI/visitor
                     channel=0
                 )
-                self.debug("Baichuan event subscription active")
+                baichuan_ok = True
             except Exception as _ex:
                 self.error("Baichuan subscription failed: " + str(_ex))
 
             # Fallback: ONVIF webhook subscription (only if ONVIF is enabled)
+            onvif_ok = False
             if camera.onvif_enabled:
-                if not await self.camera_subscribe(camera, self.webhook_url):
+                onvif_ok = await self.camera_subscribe(camera, self.webhook_url)
+                if not onvif_ok:
                     self.debug("ONVIF subscription failed, relying on Baichuan only")
+
+            self.log(
+                "Connected to '" + str(camera.camera_name(0)) + "' (" + str(camera.model) + ")"
+                + " | Baichuan: " + ("OK" if baichuan_ok else "FAILED")
+                + " | ONVIF: " + ("OK" if onvif_ok else ("disabled" if not camera.onvif_enabled else "FAILED"))
+            )
 
             return camera
         return False
@@ -421,6 +430,9 @@ class BasePlugin:
         self.webhook_url = "http://" + self.webhook_host + ":" + str(self.webhook_port)
 
         Domoticz.Heartbeat(30)
+
+        Domoticz.Status("Connecting to camera at " + self.camera_ipaddress + ":" + str(self.camera_port)
+                        + " as user '" + self.camera_username + "'")
 
         ##
         # Create webhook
