@@ -494,6 +494,9 @@ class BasePlugin:
                 Domoticz.Error("Runtime environment not met. Terminating camera!")
                 return
 
+            # Wait for Domoticz to finish binding the webhook port after onStart() returns
+            time.sleep(2)
+
             while True:
                 if self.stop_plugin:
                     break
