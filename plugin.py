@@ -70,6 +70,7 @@ Reolink documation</a>
 
 import threading
 import time
+import socket
 from datetime import datetime, timedelta
 import json
 import os
@@ -494,8 +495,19 @@ class BasePlugin:
                 Domoticz.Error("Runtime environment not met. Terminating camera!")
                 return
 
-            # Wait for Domoticz to finish binding the webhook port after onStart() returns
-            time.sleep(2)
+            # Wait for Domoticz to finish binding the webhook port after onStart() returns.
+            # Poll until the port is actually accepting connections (up to 30 seconds).
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(1)
+                    if sock.connect_ex((self.webhook_host, int(self.webhook_port))) == 0:
+                        break
+                time.sleep(0.5)
+            else:
+                Domoticz.Error("Webhook port " + str(self.webhook_port)
+                               + " on " + self.webhook_host + " not available after 30 seconds - aborting!")
+                return
 
             while True:
                 if self.stop_plugin:
@@ -556,10 +568,10 @@ class BasePlugin:
 
     def onConnect(self, Connection, Status, Description):
         if Status == 0:
-            Domoticz.Debug("Connected successfully to: " + Connection.Address + ":" + Connection.Port)
+            Domoticz.Debug("Incoming connection from: " + Connection.Address + ":" + Connection.Port)
         else:
-            Domoticz.Debug("Failed to connect (" + str(Status) + ") to: " + Connection.Address + ":"
-                           + Connection.Port + " with error: " + Description)
+            Domoticz.Error("Webhook listen failed on " + Connection.Address + ":" + Connection.Port
+                           + " (Status " + str(Status) + "): " + Description)
         Domoticz.Debug(str(Connection))
 
     def switch_off(self, device):
