@@ -73,9 +73,268 @@ import time
 from datetime import datetime, timedelta
 import json
 import os
+import sys
+import asyncio
+import requests
+from importlib.metadata import version
 import reolink_utils
-import subprocess
 import DomoticzEx as Domoticz
+from reolink_aio.api import Host
+from reolink_aio.enums import SubType
+from reolink_aio.exceptions import (ReolinkError, SubscriptionError,
+                                    ReolinkTimeoutError, CredentialsInvalidError, LoginError)
+
+
+def check_runtime():
+    """ Check the current runtime so it complies with the requirements."""
+    if sys.version_info[0] < 3:
+        Domoticz.Error("Wrong Python version: " + sys.version)
+        return False
+
+    requirements = {}
+    if sys.version_info[1] < 11:
+        requirements["reolink_aio"] = '0.9.0'
+    else:
+        requirements["reolink_aio"] = '0.11.6'
+
+    for module, req_version in requirements.items():
+        _version = str(version(module))
+        if _version == req_version:
+            Domoticz.Debug("Version: " + module + " " + _version + " == " + req_version)
+        else:
+            Domoticz.Error("Version: " + module + " " + _version + " != " + req_version)
+
+    return True
+
+
+class CameraProcess:
+    """Handles the camera connection and ONVIF event subscription."""
+
+    def __init__(self, camera_ipaddress, camera_port, camera_username, camera_password,
+                 webhook_host, webhook_port):
+        self.camera_ipaddress = camera_ipaddress
+        self.camera_port = camera_port
+        self.camera_username = camera_username
+        self.camera_password = camera_password
+        self.webhook_host = webhook_host
+        self.webhook_port = webhook_port
+        self.webhook_url = "http://" + webhook_host + ":" + str(webhook_port)
+        self.RUNNING = False
+        self._stop_event = threading.Event()
+        self.delay_reconnect = 0
+
+    def stop(self):
+        """Signal the camera process to stop."""
+        self.RUNNING = False
+        self._stop_event.set()
+
+    def post(self, msg):
+        """ Post msg to the webhook_url"""
+        try:
+            json_object = json.dumps(msg)
+            requests.post(self.webhook_url, json=json_object, timeout=2)
+        except requests.exceptions.RequestException as _ex:
+            Domoticz.Debug("Post Error: " + str(_ex))
+
+    def log(self, msg):
+        """ Send a Log message to the server, message in msg """
+        myobj = {'Type': 'Log',
+                 'Log': msg}
+        self.post(myobj)
+
+    def error(self, msg):
+        """ Send an Error message to the server, message in msg """
+        myobj = {'Type': 'Log',
+                 'Error': msg}
+        self.post(myobj)
+
+    def debug(self, msg):
+        """ Send a Debug message to the server, message in msg """
+        myobj = {'Type': 'Log',
+                 'Debug': msg}
+        self.post(myobj)
+
+    def stop_msg(self, msg):
+        """ Send a Stop message to the server, message in msg """
+        myobj = {'Type': 'Stop',
+                 'Message': msg}
+        self.post(myobj)
+
+    def get_or_create_eventloop(self):
+        """ Get or create an asyncio eventloop """
+        try:
+            return asyncio.get_event_loop()
+        except RuntimeError as _ex:
+            if "There is no current event loop in thread" in str(_ex):
+                asyncio.set_event_loop(asyncio.new_event_loop())
+                return asyncio.get_event_loop()
+        return None
+
+    def camera_startup(self, camera):
+        """ Send camera information at startup."""
+        camera_info = {}
+        camera_info["Type"] = 'Startup'
+        camera_info["Name"] = str(camera.camera_name(0))
+        camera_info["Model"] = str(camera.model)
+        camera_info["Hardware version"] = str(camera.hardware_version)
+        camera_info["Software version"] = str(camera.sw_version)
+        camera_info["Mac_address"] = str(camera.mac_address)
+        camera_info["Is doorbell"] = str(camera.is_doorbell(0))
+        camera_info["AI supported"] = str(camera.ai_supported(0))
+        camera_info["AI types"] = str(camera.ai_supported_types(0))
+        self.post(camera_info)
+        return True
+
+    def camera_init(self, camera) -> bool:
+        """" Check requirements for the camera. """
+        if not camera.rtsp_enabled:
+            self.stop_msg("Camera RTSP is not enabled. Please enable and restart the plugin!")
+            return False
+
+        if not camera.onvif_enabled:
+            self.stop_msg("Camera ONVIF is not enabled. Please enable and restart the plugin!")
+            return False
+
+        return True
+
+    def get_camera_host(self, _camera_ipaddress, _camera_username, _camera_password, _camera_port):
+        """ Get the Camera Host from Reolink API."""
+        try:
+            self.debug("Connect camera at: " + str(_camera_ipaddress))
+            camera_host = Host(_camera_ipaddress, _camera_username, _camera_password, port=_camera_port)
+            return camera_host
+        except ReolinkError as err:
+            self.error("get_camera_host failed with ReolinkError: " + str(err))
+            return None
+
+    def get_camera(self):
+        try:
+            camera = self.get_camera_host(self.camera_ipaddress, self.camera_username,
+                                          self.camera_password, self.camera_port)
+        except LoginError as _ex:
+            self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+            if "password wrong" in str(_ex):
+                self.error("Failed to login - wrong password!")
+                return None
+            if "password wrong" in str(_ex):
+                self.error("Failed to login - username invalid!")
+                return None
+            self.error("Login error: " + str(_ex))
+            return None
+        except CredentialsInvalidError as _ex:
+            self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+            self.error("Login failed - credentials error! " + str(_ex))
+            return None
+        except ReolinkTimeoutError:
+            self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+            self.error("Timeout error, camera unreachable!")
+            return -1
+        except ReolinkError as _ex:
+            self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+            self.error("Camera init failed! Reolinkerror: " + str(_ex))
+            return -1
+        except Exception as _ex:
+            self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+            self.error("Camera init failed, unknown error: " + str(_ex))
+            return None
+
+        if camera is None:
+            self.error("Get camera returned None!")
+            return None
+        return camera
+
+    async def camera_subscribe(self, camera, _camhook_url) -> bool:
+        """ Subscribe to events from the camera."""
+        try:
+            await camera.subscribe(_camhook_url, SubType.push, retry=False)
+        except SubscriptionError as _ex:
+            self.error("Camera subscriptionerror failed: " + str(_ex))
+            return False
+        return True
+
+    def increment_delay_reconnect(self, i) -> int:
+        if i < 9 * 60:
+            i = i + 60
+        return i
+
+    async def reolink_run_init(self):
+        while self.RUNNING:
+            if self.delay_reconnect > 0:
+                self.debug("Delay startup " + str(self.delay_reconnect) + " seconds!")
+                await asyncio.sleep(self.delay_reconnect)
+            camera = self.get_camera()
+            if camera is None:
+                self.delay_reconnect = self.increment_delay_reconnect(self.delay_reconnect)
+                continue
+            if camera == -1:
+                return None
+            await camera.get_host_data()
+            await camera.get_states()
+            self.delay_reconnect = 0
+
+            if not self.camera_init(camera):
+                return False
+
+            if not self.camera_startup(camera):
+                continue
+
+            if not await self.camera_subscribe(camera, self.webhook_url):
+                continue
+            return camera
+        return False
+
+    async def camera_logout(self, camera):
+        self.log("Camera logout!")
+        try:
+            if camera is not None:
+                await camera.unsubscribe()
+                await camera.logout()
+        except SubscriptionError as _err:
+            self.error("Camera unsubscribe failed: " + str(_err))
+
+    async def reolink_run(self):
+        """ The main async loop. """
+        self.RUNNING = True
+
+        while self.RUNNING:
+            camera = await self.reolink_run_init()
+            if camera is None:
+                continue
+
+            ticks = 0
+            while self.RUNNING:
+                ticks = ticks + 1
+                if ticks > 30:
+                    try:
+                        await camera.get_states()
+                    except ReolinkTimeoutError:
+                        self.error("Timeout error, camera unreachable!")
+                        break
+                    except Exception as _ex:
+                        self.error("Camera update states failed: " + str(_ex))
+                        break
+
+                    renewtimer = camera.renewtimer()
+                    if renewtimer <= 100 or not camera.subscribed(SubType.push):
+                        self.debug("Renew camera subscription!")
+                        if not await camera.renew():
+                            self.RUNNING = await self.camera_subscribe(camera, self.webhook_url)
+                    ticks = 0
+                await asyncio.sleep(1)
+
+        await self.camera_logout(camera)
+
+    def async_loop(self):
+        """ async_loop should run forever."""
+        loop = self.get_or_create_eventloop()
+        loop.run_until_complete(self.reolink_run())
+        loop.run_until_complete(asyncio.sleep(1))
+        loop.close()
+
+    def run(self):
+        """Run the camera logic. Blocks until the camera process stops."""
+        self.RUNNING = True
+        self.async_loop()
 
 
 class BasePlugin:
@@ -102,7 +361,7 @@ class BasePlugin:
         self.webhook_url = ""
 
         self.task = None
-        self.process = None
+        self.camera_process = None
         self._stop_event = threading.Event()
 
     def onStart(self):
@@ -171,52 +430,43 @@ class BasePlugin:
 
     def camera_loop(self):
         try:
-            path = Parameters['HomeFolder'] + "camera.py"
-            self.process = subprocess.Popen(["python3",
-                                             path,
-                                             self.camera_ipaddress,
-                                             self.camera_port,
-                                             self.camera_username,
-                                             self.camera_password,
-                                             self.webhook_host,
-                                             self.webhook_port])
+            if not check_runtime():
+                Domoticz.Error("Runtime environment not met. Terminating camera!")
+                return
 
-            # Domoticz.Log(str(path)+" "+
-            #             str(self.camera_ipaddress)+" "+
-            #             str(self.camera_port)+" "+
-            #             str(self.camera_username)+" "+
-            #             str(self.camera_password)+" "+
-            #             str(self.webhook_host)+" "+
-            #             str(self.webhook_port))
-
-            Domoticz.Debug("Camera process poll: " + str(self.process.poll()))
             while True:
                 if self.stop_plugin:
                     break
-                # Domoticz.Debug("Camera process poll: " + str(self.process.poll()))
-                if self.process is not None:
-                    if self.process.poll() is not None:
-                        Domoticz.Error("Camera process dead: " + str(self.process.returncode))
-                        self.process = subprocess.Popen(["python3", path,
-                                                         self.camera_ipaddress, self.camera_port,
-                                                         self.camera_username, self.camera_password,
-                                                         self.webhook_host, self.webhook_port])
+
+                cam = CameraProcess(
+                    self.camera_ipaddress,
+                    self.camera_port,
+                    self.camera_username,
+                    self.camera_password,
+                    self.webhook_host,
+                    self.webhook_port
+                )
+                self.camera_process = cam
+                cam.run()
+
+                if self.stop_plugin:
+                    break
+
+                Domoticz.Error("Camera process ended unexpectedly. Restarting in 15 seconds!")
                 if self._stop_event.wait(timeout=15):
                     break
         except Exception as err:
-            Domoticz.Error("handleMessage: " + str(err))
+            Domoticz.Error("camera_loop error: " + str(err))
 
-        Domoticz.Debug("Terminate camera process!")
-        self.process.terminate()
-        while self.process.poll() is None:
-            time.sleep(1)
-            Domoticz.Debug("Waiting for process to die!")
-            self.process.kill()
+        Domoticz.Debug("Camera loop terminated!")
 
     def onStop(self):
         self.running = False
         self.stop_plugin = True
         self._stop_event.set()
+
+        if self.camera_process is not None:
+            self.camera_process.stop()
 
         # Cancel any pending motion-reset timer threads
         for device, thread in list(self.threads.items()):
