@@ -134,7 +134,7 @@ class CameraProcess:
         """ Post msg to the webhook_url"""
         try:
             json_object = json.dumps(msg)
-            requests.post(self.webhook_url, json=json_object, timeout=2)
+            requests.post(self.webhook_url, json=json_object, timeout=5)
         except requests.exceptions.RequestException as _ex:
             Domoticz.Error("Webhook post to " + self.webhook_url + " failed: " + str(_ex))
 
@@ -485,6 +485,8 @@ class BasePlugin:
                                  target=BasePlugin.camera_loop, args=(self, i))
             self.camera_threads.append(t)
             t.start()
+            if i < n - 1:
+                time.sleep(0.5)  # stagger starts to avoid webhook race at startup
 
     def camera_startup(self, camera_info):
         ##
