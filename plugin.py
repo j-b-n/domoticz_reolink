@@ -422,6 +422,8 @@ class BasePlugin:
 
         self.camera_configs = []       # list of (ip, port, username, password, prefix)
         self.camera_ip_to_prefix = {}  # camera IP -> device prefix (for ONVIF routing)
+        self.camera_name_map = {}      # camera IP -> camera name (actual device name)
+        self.prefix_to_camera_name = {}  # generic prefix "Cam1 " -> real name "Garage"
         self.camera_processes = []     # one CameraProcess per camera
         self.camera_threads = []       # one thread per camera
 
@@ -492,7 +494,17 @@ class BasePlugin:
         ##
         # Create devices if they are not created
         ##
-        prefix = camera_info.get("Prefix", "")
+        generic_prefix = camera_info.get("Prefix", "")
+        camera_name = camera_info.get("Name", generic_prefix)
+        
+        # Store the mapping from generic prefix (Cam1, Cam2) to real camera name
+        if generic_prefix:
+            self.prefix_to_camera_name[generic_prefix] = camera_name
+            # Use real camera name as device prefix for multiple cameras
+            device_prefix = camera_name + " "
+        else:
+            # Single camera: no prefix needed
+            device_prefix = ""
 
         supported = camera_info["AI types"].strip('][').replace("'", '').split(', ')
         supported.append('motion')
@@ -506,8 +518,9 @@ class BasePlugin:
                 Domoticz.Debug(f"Unknown device type: {_device}, skipping device creation")
                 continue
             base_name = self.DEVICENAME[_device]
-            device_name = prefix + base_name
+            device_name = device_prefix + base_name
             if device_name not in Devices:
+                Domoticz.Log(f"Creating device: {device_name}")
                 create_device(device_name, self.CAMERADEVICES[base_name])
 
     def camera_loop(self, camera_index=0):
@@ -594,8 +607,38 @@ class BasePlugin:
                            + " (Status " + str(Status) + "): " + Description)
         Domoticz.Debug(str(Connection))
 
+    def get_camera_name_from_prefix(self, prefix):
+        """Get the actual camera name if we have it, otherwise return the prefix."""
+        if prefix in self.prefix_to_camera_name:
+            return self.prefix_to_camera_name[prefix]
+        if prefix in self.camera_name_map:
+            return self.camera_name_map[prefix]
+        # Try to find by IP-based mapping
+        for stored_prefix, camera_name in self.camera_name_map.items():
+            if stored_prefix == prefix or stored_prefix.startswith(prefix):
+                return camera_name
+        return prefix
+
+    def get_device_prefix(self, generic_prefix):
+        """Convert generic prefix (Cam1, Cam2) to real camera name prefix for device names."""
+        if not generic_prefix:
+            return ""  # Single camera, no prefix
+        real_camera_name = self.get_camera_name_from_prefix(generic_prefix)
+        if real_camera_name != generic_prefix:
+            return real_camera_name + " "
+        return generic_prefix
+
+    def get_display_device_name(self, device_name):
+        """Get the display-friendly device name, converting generic prefixes to real camera names."""
+        for generic_prefix in self.prefix_to_camera_name:
+            if device_name.startswith(generic_prefix):
+                real_prefix = self.prefix_to_camera_name[generic_prefix] + " "
+                return real_prefix + device_name[len(generic_prefix):]
+        return device_name
+
     def switch_off(self, device):
-        Domoticz.Log("Send Off to " + device)
+        display_name = self.get_display_device_name(device)
+        Domoticz.Log("Send Off to " + display_name)
         if device.endswith("Doorbell"):
             sval_off = 0
         else:
@@ -607,18 +650,27 @@ class BasePlugin:
         Domoticz.Debug("Start thread for device " + device
                        + " send off in " + str(self.motion_resettime)
                        + " seconds")
-        if device in self.threads:
-            if self.threads[device] is not None:
+        
+        # Cancel any existing timer for this device
+        if device in self.threads and self.threads[device] is not None:
+            try:
                 if self.threads[device].is_alive():
-                    # Domoticz.Error("Device thread for " + device + " is alive! Cancel old thread and start new one!")
+                    Domoticz.Debug("Cancelling existing timer for " + device)
                     self.threads[device].cancel()
-                    time.sleep(0.1)
-                    while self.threads[device].is_alive():
-                        Domoticz.Error("Device thread for " + device + " is STILL alive! Cancel!!")
-                        self.threads[device].cancel()
-                        time.sleep(0.1)
+                    # Give it a moment to cancel, with timeout
+                    timeout = 0
+                    while self.threads[device].is_alive() and timeout < 10:
+                        time.sleep(0.05)
+                        timeout += 1
+                    if self.threads[device].is_alive():
+                        Domoticz.Error("Failed to cancel timer for device " + device)
+            except Exception as ex:
+                Domoticz.Debug("Error cancelling thread for " + device + ": " + str(ex))
+            self.threads[device] = None
 
+        # Start fresh timer
         t = threading.Timer(int(self.motion_resettime), self.switch_off, [device])
+        t.daemon = True
         t.start()
         self.threads[device] = t
 
@@ -650,16 +702,26 @@ class BasePlugin:
         (sval_on, sval_off) = self.get_sval(device_name)
         if parse_result:
             # self.write_debug_file(device_name, "on", data)
-            if Devices[device_name].Units[1].sValue != sval_on:
-                Domoticz.Log("Send On to " + device_name)
+            current_state = Devices[device_name].Units[1].sValue
+            if current_state != sval_on:
+                # Device transitioning to "On" state
+                display_name = self.get_display_device_name(device_name)
+                Domoticz.Log("Send On to " + display_name)
                 update_device(device_name, Unit=1, sValue=sval_on, nValue=1)
                 if int(self.motion_resettime) > 0:
                     if device_name in self.THREADDEVICES:
                         self.start_thread(device_name)
+            else:
+                # Device already "On" - restart the timer (new motion event detected while motion ongoing)
+                if int(self.motion_resettime) > 0:
+                    if device_name in self.THREADDEVICES:
+                        Domoticz.Debug("Motion event while already On - restarting timer for " + device_name)
+                        self.start_thread(device_name)
         else:
             # self.write_debug_file(device_name, "off", data)
             if int(self.motion_resettime) < 1:
-                Domoticz.Log("Send Off to " + device_name)
+                display_name = self.get_display_device_name(device_name)
+                Domoticz.Log("Send Off to " + display_name)
                 update_device(device_name, Unit=1, sValue=sval_off, nValue=0)
 
         return
@@ -673,10 +735,13 @@ class BasePlugin:
         except Exception:
             return
 
+        # Convert generic prefix to real camera name prefix
+        device_prefix = self.get_device_prefix(prefix)
+
         if parse_result is not None:
             for rule in parse_result:
                 if rule in self.RULES_DEVICE_MAP:
-                    device_name = prefix + self.RULES_DEVICE_MAP[rule]
+                    device_name = device_prefix + self.RULES_DEVICE_MAP[rule]
                     try:
                         self.parse_update_device(parse_result[rule], device_name)
                     except Exception as ex:
@@ -700,6 +765,18 @@ class BasePlugin:
 
             if json_obj["Type"] == "Startup":
                 self.camera_startup(json_obj)
+                
+                # Extract and store camera name for logging purposes
+                prefix = json_obj.get("Prefix", "")
+                camera_name = json_obj.get("Name", prefix)
+                if prefix:
+                    # Update mapping: generic prefix -> actual camera name
+                    for ip_addr in list(self.camera_name_map.keys()):
+                        if self.camera_ip_to_prefix.get(ip_addr) == prefix:
+                            self.camera_name_map[ip_addr] = camera_name
+                    # Also store by prefix in case we need it
+                    self.camera_name_map[prefix] = camera_name
+                
                 for key in json_obj:
                     if key not in ("Type", "Prefix"):
                         Domoticz.Log("Camera " + key
@@ -714,11 +791,12 @@ class BasePlugin:
 
             if json_obj["Type"] == "Event":
                 prefix = json_obj.get("Prefix", "")
+                device_prefix = self.get_device_prefix(prefix)
                 for rule, state in json_obj.items():
                     if rule in ("Type", "Prefix"):
                         continue
                     if rule in self.RULES_DEVICE_MAP:
-                        device_name = prefix + self.RULES_DEVICE_MAP[rule]
+                        device_name = device_prefix + self.RULES_DEVICE_MAP[rule]
                         try:
                             self.parse_update_device(bool(state), device_name)
                         except Exception as ex:
@@ -747,7 +825,7 @@ class BasePlugin:
 
         # Always send HTTP 200 so the caller (requests.post / camera) doesn't see a disconnect
         connection.Send({"Status": "200 OK",
-                         "Headers": {"Content-Type": "text/plain", "Connection": "close"},
+                         "Headers": {"Content-Type": "text/plain", "Connection": "keep-alive"},
                          "Data": ""})
 
         if "Content-Type" in message["Headers"]:
@@ -851,7 +929,9 @@ def onHeartbeat():
 
 
 def create_device(device_name, device_id):
-    if device_name == "Doorbell":
+    # Doorbell devices should have doorbell switch type (1)
+    # All other sensor types get motion sensor type (8)
+    if device_name.endswith("Doorbell"):
         switch_type = 1
     else:
         switch_type = 8
