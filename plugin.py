@@ -719,6 +719,10 @@ class BasePlugin:
         if device_name not in Devices:
             return
         (sval_on, sval_off) = self.get_sval(device_name)
+        
+        # Check if this device type should have a timer (e.g., "Doorbell Motion", "Garage Vehicle" etc.)
+        should_have_timer = any(device_name.endswith(thread_dev) for thread_dev in self.THREADDEVICES)
+        
         if parse_result:
             # self.write_debug_file(device_name, "on", data)
             current_state = Devices[device_name].Units[1].sValue
@@ -727,15 +731,13 @@ class BasePlugin:
                 display_name = self.get_display_device_name(device_name)
                 Domoticz.Log("Send On to " + display_name)
                 update_device(device_name, Unit=1, sValue=sval_on, nValue=1)
-                if int(self.motion_resettime) > 0:
-                    if device_name in self.THREADDEVICES:
-                        self.start_thread(device_name)
+                if int(self.motion_resettime) > 0 and should_have_timer:
+                    self.start_thread(device_name)
             else:
                 # Device already "On" - restart the timer (new motion event detected while motion ongoing)
-                if int(self.motion_resettime) > 0:
-                    if device_name in self.THREADDEVICES:
-                        Domoticz.Debug("Motion event while already On - restarting timer for " + device_name)
-                        self.start_thread(device_name)
+                if int(self.motion_resettime) > 0 and should_have_timer:
+                    Domoticz.Debug("Motion event while already On - restarting timer for " + device_name)
+                    self.start_thread(device_name)
         else:
             # self.write_debug_file(device_name, "off", data)
             if int(self.motion_resettime) < 1:
