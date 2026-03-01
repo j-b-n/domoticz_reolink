@@ -132,7 +132,12 @@ class CameraProcess:
 
     def post(self, msg):
         """ Post msg to the webhook_url with retry logic for startup transients"""
-        max_retries = 3
+        # Don't retry if we're shutting down - the webhook listener may be closed
+        if not self.RUNNING:
+            max_retries = 1
+        else:
+            max_retries = 3
+        
         retry_delay = 0.5  # seconds
         
         for attempt in range(max_retries):
@@ -142,13 +147,15 @@ class CameraProcess:
                 return  # Success
             except requests.exceptions.RequestException as _ex:
                 if attempt < max_retries - 1:
-                    # Don't log on first retry, it's likely just timing during startup
-                    if attempt > 0:
+                    # Don't log on first retry during startup, it's likely just timing
+                    if attempt > 0 and self.RUNNING:
                         self.debug(f"Webhook post retry {attempt + 1}/{max_retries} after failure: {str(_ex)}")
-                    time.sleep(retry_delay)
+                    if self.RUNNING:
+                        time.sleep(retry_delay)
                 else:
-                    # Only log error on final attempt
-                    Domoticz.Error("Webhook post to " + self.webhook_url + " failed: " + str(_ex))
+                    # Only log error on final attempt if we're still running
+                    if self.RUNNING:
+                        Domoticz.Error("Webhook post to " + self.webhook_url + " failed: " + str(_ex))
 
     def log(self, msg):
         """ Send a Log message to the server, message in msg """
