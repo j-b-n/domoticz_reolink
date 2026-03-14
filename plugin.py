@@ -604,19 +604,22 @@ class BasePlugin:
             if t.is_alive():
                 Domoticz.Error("Camera thread '" + t.name + "' did not stop within timeout!")
 
-        for thread in threading.enumerate():
-            if thread.name != threading.current_thread().name:
-                Domoticz.Log("'" + thread.name
-                             + "' is running, it must be shutdown otherwise Domoticz will abort on plugin exit.")
+        # Check for any non-daemon threads we started that are still running (excluding MainThread and current)
+        current = threading.current_thread()
+        owned = [t for t in threading.enumerate()
+                 if t is not current and t.name != "MainThread" and not t.daemon]
+        for thread in owned:
+            Domoticz.Log("'" + thread.name
+                         + "' is running, it must be shutdown otherwise Domoticz will abort on plugin exit.")
 
-        # Wait until queue thread has exited
-        Domoticz.Log("Threads still active: " + str(threading.active_count()) + ", should be 1.")
-        while threading.active_count() > 1:
-            for thread in threading.enumerate():
-                if thread.name != threading.current_thread().name:
-                    Domoticz.Log("'" + thread.name
-                                 + "' is still running, waiting otherwise Domoticz will abort on plugin exit.")
-            time.sleep(0.5)
+        if owned:
+            Domoticz.Log("Threads still active: " + str(len(owned)) + ", waiting for them to finish.")
+            while any(t.is_alive() for t in owned):
+                for thread in owned:
+                    if thread.is_alive():
+                        Domoticz.Log("'" + thread.name
+                                     + "' is still running, waiting otherwise Domoticz will abort on plugin exit.")
+                time.sleep(0.5)
 
     def onConnect(self, Connection, Status, Description):
         if Status == 0:
