@@ -125,11 +125,18 @@ class CameraProcess:
         self.delay_reconnect = 0
         self._camera = None
         self._baichuan_ok = False
+        self._loop = None
 
     def stop(self):
         """Signal the camera process to stop."""
         self.RUNNING = False
         self._stop_event.set()
+        # Cancel all pending asyncio tasks to unblock awaits (e.g. asyncio.sleep)
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(
+                lambda: [t.cancel() for t in asyncio.all_tasks(loop)]
+            )
 
     def post(self, msg):
         """ Post msg to the webhook_url with retry logic for startup transients"""
@@ -362,62 +369,97 @@ class CameraProcess:
     async def camera_logout(self, camera):
         self.log("Camera logout!")
         self._camera = None
+        if camera is None:
+            return
         try:
-            if camera is not None:
-                camera.baichuan.unregister_callback("domoticz_plugin")
-                if camera.baichuan.session_active:
-                    await camera.baichuan.unsubscribe_events()
-                await camera.unsubscribe()
-                await camera.logout()
-        except SubscriptionError as _err:
-            self.error("Camera unsubscribe failed: " + str(_err))
+            camera.baichuan.unregister_callback("domoticz_plugin")
+        except Exception:
+            pass
+        if camera.baichuan.session_active:
+            try:
+                await asyncio.wait_for(camera.baichuan.unsubscribe_events(), timeout=5.0)
+            except Exception as _err:
+                self.error("Baichuan unsubscribe failed: " + str(_err))
+        if not self._baichuan_ok:
+            # Only unsubscribe ONVIF if it was actually subscribed
+            try:
+                await asyncio.wait_for(camera.unsubscribe(), timeout=5.0)
+            except Exception as _err:
+                self.error("ONVIF unsubscribe failed: " + str(_err))
+        try:
+            await asyncio.wait_for(camera.logout(), timeout=5.0)
+        except Exception as _err:
+            self.error("Camera logout failed: " + str(_err))
 
     async def reolink_run(self):
         """ The main async loop. """
         self.RUNNING = True
-
-        while self.RUNNING:
-            camera = await self.reolink_run_init()
-            if camera is None:
-                continue
-
-            ticks = 0
+        camera = None
+        try:
             while self.RUNNING:
-                ticks = ticks + 1
-                if ticks > 30:
-                    try:
-                        await camera.get_states()
-                    except ReolinkTimeoutError:
-                        self.error("Timeout error, camera unreachable!")
-                        break
-                    except Exception as _ex:
-                        self.error("Camera update states failed: " + str(_ex))
-                        break
+                camera = await self.reolink_run_init()
+                if not camera:
+                    continue
 
-                    # Baichuan: keepalive check
-                    try:
-                        await camera.baichuan.check_subscribe_events()
-                    except Exception as _ex:
-                        self.error("Baichuan keepalive failed: " + str(_ex))
+                ticks = 0
+                while self.RUNNING:
+                    ticks = ticks + 1
+                    if ticks > 30:
+                        try:
+                            await camera.get_states()
+                        except ReolinkTimeoutError:
+                            self.error("Timeout error, camera unreachable!")
+                            break
+                        except Exception as _ex:
+                            self.error("Camera update states failed: " + str(_ex))
+                            break
 
-                    # ONVIF fallback: renew subscription when needed (only if Baichuan is not active)
-                    if not self._baichuan_ok and camera.onvif_enabled:
-                        renewtimer = camera.renewtimer()
-                        if renewtimer <= 100 or not camera.subscribed(SubType.push):
-                            self.debug("Renew ONVIF subscription!")
-                            if not await camera.renew():
-                                await self.camera_subscribe(camera, self.camera_webhook_url)
-                    ticks = 0
-                await asyncio.sleep(1)
+                        # Baichuan: keepalive check
+                        try:
+                            await camera.baichuan.check_subscribe_events()
+                        except Exception as _ex:
+                            self.error("Baichuan keepalive failed: " + str(_ex))
 
-        await self.camera_logout(camera)
+                        # ONVIF fallback: renew subscription when needed (only if Baichuan is not active)
+                        if not self._baichuan_ok and camera.onvif_enabled:
+                            renewtimer = camera.renewtimer()
+                            if renewtimer <= 100 or not camera.subscribed(SubType.push):
+                                self.debug("Renew ONVIF subscription!")
+                                if not await camera.renew():
+                                    await self.camera_subscribe(camera, self.camera_webhook_url)
+                        ticks = 0
+                    await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if camera:
+                await self.camera_logout(camera)
 
     def async_loop(self):
         """ async_loop should run forever."""
         loop = self.get_or_create_eventloop()
-        loop.run_until_complete(self.reolink_run())
-        loop.run_until_complete(asyncio.sleep(1))
-        loop.close()
+        self._loop = loop
+        try:
+            loop.run_until_complete(self.reolink_run())
+        except Exception:
+            pass
+        finally:
+            # Cancel any tasks left behind by reolink_aio (e.g. Baichuan TCP reader)
+            try:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    for task in pending:
+                        task.cancel()
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
+            # Shut down the default thread-pool executor so its threads don't linger
+            try:
+                loop.run_until_complete(loop.shutdown_default_executor())
+            except Exception:
+                pass
+            loop.close()
+            self._loop = None
 
     def run(self):
         """Run the camera logic. Blocks until the camera process stops."""
