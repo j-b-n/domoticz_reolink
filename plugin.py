@@ -340,9 +340,9 @@ class CameraProcess:
             except Exception as _ex:
                 self.error("Baichuan subscription failed: " + str(_ex))
 
-            # Fallback: ONVIF webhook subscription (only if ONVIF is enabled)
+            # Fallback: ONVIF webhook subscription (only if Baichuan failed and ONVIF is enabled)
             onvif_ok = False
-            if camera.onvif_enabled:
+            if not baichuan_ok and camera.onvif_enabled:
                 onvif_ok = await self.camera_subscribe(camera, self.camera_webhook_url)
                 if not onvif_ok:
                     self.debug("ONVIF subscription failed, relying on Baichuan only")
@@ -350,7 +350,7 @@ class CameraProcess:
             self.log(
                 "Connected to '" + str(camera.camera_name(0)) + "' (" + str(camera.model) + ")"
                 + " | Baichuan: " + ("OK" if baichuan_ok else "FAILED")
-                + " | ONVIF: " + ("OK" if onvif_ok else ("disabled" if not camera.onvif_enabled else "FAILED"))
+                + " | ONVIF: " + ("OK" if onvif_ok else ("skipped (Baichuan active)" if baichuan_ok else ("disabled" if not camera.onvif_enabled else "FAILED")))
             )
 
             return camera
