@@ -140,11 +140,10 @@ class CameraProcess:
 
     def post(self, msg):
         """ Post msg to the webhook_url with retry logic for startup transients"""
-        # Don't retry if we're shutting down - the webhook listener may be closed
+        # Don't post after shutdown — Domoticz webhook transport may already be torn down
         if not self.RUNNING:
-            max_retries = 1
-        else:
-            max_retries = 3
+            return
+        max_retries = 3
         
         retry_delay = 0.5  # seconds
         
@@ -367,7 +366,7 @@ class CameraProcess:
         return False
 
     async def camera_logout(self, camera):
-        self.log("Camera logout!")
+        """Best-effort cleanup on shutdown. Must complete quickly (Domoticz has ~10s total budget)."""
         self._camera = None
         if camera is None:
             return
@@ -377,19 +376,18 @@ class CameraProcess:
             pass
         if camera.baichuan.session_active:
             try:
-                await asyncio.wait_for(camera.baichuan.unsubscribe_events(), timeout=5.0)
-            except Exception as _err:
-                self.error("Baichuan unsubscribe failed: " + str(_err))
+                await asyncio.wait_for(camera.baichuan.unsubscribe_events(), timeout=2.0)
+            except Exception:
+                pass
         if not self._baichuan_ok:
-            # Only unsubscribe ONVIF if it was actually subscribed
             try:
-                await asyncio.wait_for(camera.unsubscribe(), timeout=5.0)
-            except Exception as _err:
-                self.error("ONVIF unsubscribe failed: " + str(_err))
+                await asyncio.wait_for(camera.unsubscribe(), timeout=2.0)
+            except Exception:
+                pass
         try:
-            await asyncio.wait_for(camera.logout(), timeout=5.0)
-        except Exception as _err:
-            self.error("Camera logout failed: " + str(_err))
+            await asyncio.wait_for(camera.logout(), timeout=2.0)
+        except Exception:
+            pass
 
     async def reolink_run(self):
         """ The main async loop. """
@@ -450,12 +448,12 @@ class CameraProcess:
                 if pending:
                     for task in pending:
                         task.cancel()
-                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            except Exception:
-                pass
-            # Shut down the default thread-pool executor so its threads don't linger
-            try:
-                loop.run_until_complete(loop.shutdown_default_executor())
+                    loop.run_until_complete(
+                        asyncio.wait_for(
+                            asyncio.gather(*pending, return_exceptions=True),
+                            timeout=3.0
+                        )
+                    )
             except Exception:
                 pass
             loop.close()
