@@ -124,6 +124,7 @@ class CameraProcess:
         self._stop_event = threading.Event()
         self.delay_reconnect = 0
         self._camera = None
+        self._baichuan_ok = False
 
     def stop(self):
         """Signal the camera process to stop."""
@@ -327,6 +328,7 @@ class CameraProcess:
 
             # Primary: subscribe to Baichuan TCP push events
             self._camera = camera
+            self._baichuan_ok = False
             baichuan_ok = False
             try:
                 await camera.baichuan.subscribe_events()
@@ -337,6 +339,7 @@ class CameraProcess:
                     channel=0
                 )
                 baichuan_ok = True
+                self._baichuan_ok = True
             except Exception as _ex:
                 self.error("Baichuan subscription failed: " + str(_ex))
 
@@ -397,8 +400,8 @@ class CameraProcess:
                     except Exception as _ex:
                         self.error("Baichuan keepalive failed: " + str(_ex))
 
-                    # ONVIF fallback: renew subscription when needed
-                    if camera.onvif_enabled:
+                    # ONVIF fallback: renew subscription when needed (only if Baichuan is not active)
+                    if not self._baichuan_ok and camera.onvif_enabled:
                         renewtimer = camera.renewtimer()
                         if renewtimer <= 100 or not camera.subscribed(SubType.push):
                             self.debug("Renew ONVIF subscription!")
